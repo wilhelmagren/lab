@@ -1,0 +1,23 @@
+var kebab = "tallrik";
+
+class Pizzeria {
+  cook() {
+    print "Cooking pizza!";
+  }
+
+  serve(who) {
+    print "Enjoy your pizza, " + who + "!";
+  }
+}
+
+print "this line what is it";
+
+/*
+this is a comment
+and should be ignore
+1234 . 455
+
+haha
+*/
+
+print kebab;
