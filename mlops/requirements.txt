@@ -1,0 +1,13 @@
+mlflow
+scikit-learn
+pandas
+polars
+numpy
+matplotlib
+torchmetrics
+torchinfo
+torchvision
+torch
+psutil
+pynvml
+pyrsmi

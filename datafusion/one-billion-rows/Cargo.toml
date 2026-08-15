@@ -1,0 +1,8 @@
+[package]
+name = "one-billion-rows"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+datafusion = "45.0.0"
+tokio = { version = "1.43.0", features = ["rt-multi-thread"] }

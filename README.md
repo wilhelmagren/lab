@@ -1,2 +1,4 @@
-# lab
-Experiments in computer science λ
+# My data lab
+
+Lab repository for anything data related.
+

@@ -1,0 +1,6 @@
+{
+    "user_id": "Int64",
+    "username": "Utf8",
+    "last_login": "Datetime",
+    "banned": "Boolean"
+}

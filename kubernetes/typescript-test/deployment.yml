@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ts-test
+  labels:
+    app: ts-test
+spec:
+  containers:
+    - name: ts-test
+      image: localhost:5000/ts-test
+      imagePullPolicy: IfNotPresent

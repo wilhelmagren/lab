@@ -1,0 +1,16 @@
+[project]
+name = "arrow"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "adbc-driver-postgresql>=1.8.0",
+    "matplotlib>=3.10.6",
+    "numpy>=2.3.3",
+    "pandas>=2.3.2",
+    "polars>=1.33.1",
+    "psycopg2-binary>=2.9.10",
+    "sqlalchemy>=2.0.43",
+    "testcontainers>=4.13.0",
+]

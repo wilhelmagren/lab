@@ -1,0 +1,37 @@
+[project]
+name = "ndjson"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "matplotlib>=3.10.6",
+    "orjson>=3.11.3",
+    "pandas>=2.3.2",
+    "polars>=1.33.1",
+    "pyarrow>=21.0.0",
+    "tqdm>=4.67.1",
+]
+
+[tool.pyright]
+venvPath = "../"
+venv = ".venv"
+exclude = [".venv"]
+
+[tool.ruff]
+line-length = 88
+indent-width = 4
+target-version = "py311"
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+
+[tool.ruff.lint]
+select = ["D", "W", "E", "F", "B", "I", "ANN"]
+ignore = ["D100", "D104", "D105", "D203", "D205", "D212"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401", "F402"]
+"test_*.py" = ["D", "ANN", "E501"]
