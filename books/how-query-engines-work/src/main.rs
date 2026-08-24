@@ -1,50 +1,13 @@
 use arrow::{
     array::{
-        Array, ArrayData, ArrayRef, BooleanArray, Float32Array, Float64Array, Int8Array,
-        Int16Array, Int32Array, Int64Array, StringArray, UInt8Array, UInt16Array, UInt32Array,
-        UInt64Array,
+        Array, ArrayRef, BooleanArray, Float32Array, Float64Array, Int8Array, Int16Array,
+        Int32Array, Int64Array, StringArray, UInt8Array, UInt16Array, UInt32Array, UInt64Array,
     },
-    datatypes::{DataType as ArrowDataType, SchemaRef},
+    datatypes::{DataType, SchemaRef as ArrowSchemaRef},
 };
 use std::sync::Arc;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum DataType {
-    Boolean,
-    Int8,
-    Int16,
-    Int32,
-    Int64,
-    UInt8,
-    UInt16,
-    UInt32,
-    UInt64,
-    Float,
-    Double,
-    String,
-}
-
-impl DataType {
-    pub fn from_arrow(arrow_type: &ArrowDataType) -> Self {
-        match arrow_type {
-            ArrowDataType::Boolean => Self::Boolean,
-            ArrowDataType::Int8 => Self::Int8,
-            ArrowDataType::Int16 => Self::Int16,
-            ArrowDataType::Int32 => Self::Int32,
-            ArrowDataType::Int64 => Self::Int64,
-            ArrowDataType::UInt8 => Self::UInt8,
-            ArrowDataType::UInt16 => Self::UInt16,
-            ArrowDataType::UInt32 => Self::UInt32,
-            ArrowDataType::UInt64 => Self::UInt64,
-            ArrowDataType::Float32 => Self::Float,
-            ArrowDataType::Float64 => Self::Double,
-            ArrowDataType::Utf8 => Self::String,
-            _ => panic!("not supported datatype!"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct Field {
     name: String,
     dtype: DataType,
@@ -59,9 +22,13 @@ impl Field {
             nullable,
         }
     }
+
+    pub fn dtype(&self) -> &DataType {
+        &self.dtype
+    }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct Schema {
     fields: Vec<Field>,
 }
@@ -73,18 +40,12 @@ impl Schema {
         }
     }
 
-    pub fn from_arrow(schema: SchemaRef) -> Self {
+    pub fn from_arrow(schema: ArrowSchemaRef) -> Self {
         Self {
             fields: schema
                 .fields()
                 .iter()
-                .map(|f| {
-                    Field::new(
-                        f.name(),
-                        DataType::from_arrow(f.data_type()),
-                        f.is_nullable(),
-                    )
-                })
+                .map(|f| Field::new(f.name(), f.data_type().clone(), f.is_nullable()))
                 .collect(),
         }
     }
@@ -109,6 +70,154 @@ impl Schema {
 
         Self { fields: selected }
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum ScalarValue {
+    Boolean(bool),
+    Int8(i8),
+    Int16(i16),
+    Int32(i32),
+    Int64(i64),
+    UInt8(u8),
+    UInt16(u16),
+    UInt32(u32),
+    UInt64(u64),
+    Float32(f32),
+    Float64(f64),
+    Utf8(String),
+    Null,
+}
+
+trait ColumnArray {
+    fn dtype(&self) -> &DataType;
+    fn get_value(&self, idx: usize) -> ScalarValue;
+    fn size(&self) -> usize;
+}
+
+struct FieldArray {
+    dtype: DataType,
+    inner: ArrayRef,
+}
+
+impl ColumnArray for FieldArray {
+    fn dtype(&self) -> &DataType {
+        &self.dtype
+    }
+
+    fn get_value(&self, idx: usize) -> ScalarValue {
+        if self.inner.is_null(idx) {
+            return ScalarValue::Null;
+        }
+
+        match &self.dtype {
+            DataType::Boolean => {
+                let arr = self.inner.as_any().downcast_ref::<BooleanArray>().unwrap();
+                return ScalarValue::Boolean(arr.value(idx));
+            }
+            DataType::Int8 => {
+                let arr = self.inner.as_any().downcast_ref::<Int8Array>().unwrap();
+                return ScalarValue::Int8(arr.value(idx));
+            }
+            DataType::Int16 => {
+                let arr = self.inner.as_any().downcast_ref::<Int16Array>().unwrap();
+                return ScalarValue::Int16(arr.value(idx));
+            }
+            DataType::Int32 => {
+                let arr = self.inner.as_any().downcast_ref::<Int32Array>().unwrap();
+                return ScalarValue::Int32(arr.value(idx));
+            }
+            DataType::Int64 => {
+                let arr = self.inner.as_any().downcast_ref::<Int64Array>().unwrap();
+                return ScalarValue::Int64(arr.value(idx));
+            }
+            DataType::UInt8 => {
+                let arr = self.inner.as_any().downcast_ref::<UInt8Array>().unwrap();
+                return ScalarValue::UInt8(arr.value(idx));
+            }
+            DataType::UInt16 => {
+                let arr = self.inner.as_any().downcast_ref::<UInt16Array>().unwrap();
+                return ScalarValue::UInt16(arr.value(idx));
+            }
+            DataType::UInt32 => {
+                let arr = self.inner.as_any().downcast_ref::<UInt32Array>().unwrap();
+                return ScalarValue::UInt32(arr.value(idx));
+            }
+            DataType::UInt64 => {
+                let arr = self.inner.as_any().downcast_ref::<UInt64Array>().unwrap();
+                return ScalarValue::UInt64(arr.value(idx));
+            }
+            DataType::Float32 => {
+                let arr = self.inner.as_any().downcast_ref::<Float32Array>().unwrap();
+                return ScalarValue::Float32(arr.value(idx));
+            }
+            DataType::Float64 => {
+                let arr = self.inner.as_any().downcast_ref::<Float64Array>().unwrap();
+                return ScalarValue::Float64(arr.value(idx));
+            }
+            DataType::Utf8 => {
+                let arr = self.inner.as_any().downcast_ref::<StringArray>().unwrap();
+                return ScalarValue::Utf8(arr.value(idx).to_string());
+            }
+            d => panic!("Unsupported datatype {:?}", d),
+        }
+    }
+
+    fn size(&self) -> usize {
+        self.inner.len()
+    }
+}
+
+/// this is a virtual column
+struct LiteralValueArray {
+    dtype: DataType,
+    value: ScalarValue,
+    size: usize,
+}
+
+impl ColumnArray for LiteralValueArray {
+    fn dtype(&self) -> &DataType {
+        &self.dtype
+    }
+
+    fn get_value(&self, idx: usize) -> ScalarValue {
+        if idx >= self.size {
+            panic!("index out of bounds yoo")
+        }
+
+        self.value.clone()
+    }
+
+    fn size(&self) -> usize {
+        self.size
+    }
+}
+
+type ColumnArrayRef = Arc<dyn ColumnArray>;
+type SchemaRef = Arc<Schema>;
+
+struct RecordBatch {
+    schema: Schema,
+    columns: Vec<ColumnArrayRef>,
+}
+
+impl RecordBatch {
+    fn row_count(&self) -> usize {
+        self.columns[0].size()
+    }
+
+    fn column_count(&self) -> usize {
+        self.columns.len()
+    }
+
+    fn field(&self, idx: usize) -> ColumnArrayRef {
+        self.columns[idx].clone()
+    }
+}
+
+trait DataSource {
+    fn schema(&self) -> SchemaRef;
+    fn scan(&self, projection: impl Iterator<Item = String>) -> impl Iterator<Item = RecordBatch>;
 }
 
 fn main() {
