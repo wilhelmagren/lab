@@ -4,6 +4,7 @@ pub mod dataframe;
 pub mod logical_plan;
 pub mod record_batch;
 pub mod schema;
+pub mod scalar;
 
 /*
 use std::sync::Arc;
