@@ -53,12 +53,17 @@ struct Project {
 impl Project {
     pub fn new(input: LogicalPlan, exprs: Vec<Expr>) -> Self {
         let input_schema = input.schema();
+        let schema = Arc::new(Schema::new(
+            exprs
+                .iter()
+                .map(|expr| expr.to_field(input_schema.as_ref()))
+                .collect::<Vec<_>>(),
+        ));
+
         Self {
             input,
             exprs,
-            schema: Arc::new(Schema::new(
-                exprs.iter().map(|expr| expr.to_field(&input_schema)),
-            )),
+            schema,
         }
     }
 }
