@@ -1,14 +1,16 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use arrow::datatypes::{Schema, SchemaRef};
 
-use crate::logical::expr::Expr;
+use crate::{data_source::SourceId, logical::expr::Expr};
 
 #[derive(Clone)]
-pub enum LogicalPlanKind {
+enum LogicalPlanKind {
+    Limit(LimitPlan),
     Scan(ScanPlan),
     Filter(FilterPlan),
-    Project(ProjectPlan),
+    Projection(ProjectionPlan),
     Aggregate(AggregatePlan),
     Join(JoinPlan),
 }
@@ -17,27 +19,137 @@ pub enum LogicalPlanKind {
 pub struct LogicalPlan(Arc<LogicalPlanKind>);
 
 impl LogicalPlan {
-    pub fn kind(&self) -> &LogicalPlanKind {
+    fn kind(&self) -> &LogicalPlanKind {
         self.0.as_ref()
     }
 
     pub fn schema(&self) -> &SchemaRef {
         match self.kind() {
-            LogicalPlanKind::Scan(sp) => todo!(),
+            LogicalPlanKind::Limit(lp) => lp.schema(),
+            LogicalPlanKind::Scan(sp) => sp.schema(),
             LogicalPlanKind::Filter(fp) => fp.schema(),
-            LogicalPlanKind::Project(pp) => pp.schema(),
+            LogicalPlanKind::Projection(pp) => pp.schema(),
             LogicalPlanKind::Aggregate(ap) => ap.schema(),
             LogicalPlanKind::Join(jp) => jp.schema(),
+        }
+    }
+
+    pub fn inputs(&self) -> Vec<LogicalPlan> {
+        match self.kind() {
+            LogicalPlanKind::Limit(lp) => vec![lp.input.clone()],
+            LogicalPlanKind::Scan(_) => vec![],
+            LogicalPlanKind::Filter(fp) => vec![fp.input.clone()],
+            LogicalPlanKind::Projection(pp) => vec![pp.input.clone()],
+            LogicalPlanKind::Aggregate(ap) => vec![ap.input.clone()],
+            LogicalPlanKind::Join(jp) => vec![jp.left.clone(), jp.right.clone()],
+        }
+    }
+
+    pub fn scan(source_id: SourceId, source_name: impl Into<String>, schema: SchemaRef) -> Self {
+        Self(Arc::new(LogicalPlanKind::Scan(ScanPlan::new(
+            source_id,
+            source_name.into(),
+            schema,
+            None,
+        ))))
+    }
+
+    pub fn format(&self, indent: usize) -> String {
+        let mut s = String::new();
+        (0..indent).for_each(|_| s.push_str("  "));
+        s.push_str(self.to_string().as_str());
+        s.push_str("\n");
+        self.inputs()
+            .iter()
+            .for_each(|i| s.push_str(i.to_string().as_str()));
+        s
+    }
+}
+
+impl std::fmt::Display for LogicalPlan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.kind() {
+            LogicalPlanKind::Limit(plan) => plan.fmt(f),
+            LogicalPlanKind::Scan(plan) => plan.fmt(f),
+            LogicalPlanKind::Filter(plan) => plan.fmt(f),
+            LogicalPlanKind::Projection(plan) => plan.fmt(f),
+            LogicalPlanKind::Aggregate(plan) => plan.fmt(f),
+            LogicalPlanKind::Join(plan) => plan.fmt(f),
         }
     }
 }
 
 #[derive(Clone)]
-struct ScanPlan {
-    // scan has no input because this is always a leaf node in the AST
-    path: String,
-    projection: Option<Vec<String>>,
+struct LimitPlan {
+    input: LogicalPlan,
+    limit: usize,
     schema: SchemaRef,
+}
+
+impl LimitPlan {
+    pub fn new(input: LogicalPlan, limit: usize) -> Self {
+        let schema = input.schema().clone();
+        Self {
+            input,
+            limit,
+            schema,
+        }
+    }
+
+    fn schema(&self) -> &SchemaRef {
+        &self.schema
+    }
+}
+
+impl std::fmt::Display for LimitPlan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Limit: {}", self.limit)
+    }
+}
+
+#[derive(Clone)]
+struct ScanPlan {
+    source_id: SourceId,
+    source_name: String,
+    schema: SchemaRef,
+    projection: Option<Vec<usize>>,
+}
+
+impl ScanPlan {
+    pub fn new(
+        source_id: SourceId,
+        source_name: impl Into<String>,
+        schema: SchemaRef,
+        projection: Option<Vec<usize>>,
+    ) -> Self {
+        Self {
+            source_id,
+            source_name: source_name.into(),
+            schema,
+            projection,
+        }
+    }
+
+    pub fn source_id(&self) -> SourceId {
+        self.source_id
+    }
+
+    pub fn projection(&self) -> Option<&[usize]> {
+        self.projection.as_deref()
+    }
+
+    pub fn schema(&self) -> &SchemaRef {
+        &self.schema
+    }
+}
+
+impl std::fmt::Display for ScanPlan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.projection {
+            Some(p) => write!(f, "Scan: {}; projection={:?}", self.source_name, p),
+            None => write!(f, "Scan: {}; projection=None", self.source_name),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -69,13 +181,13 @@ impl std::fmt::Display for FilterPlan {
 }
 
 #[derive(Clone)]
-struct ProjectPlan {
+struct ProjectionPlan {
     input: LogicalPlan,
     exprs: Vec<Expr>,
     schema: SchemaRef,
 }
 
-impl ProjectPlan {
+impl ProjectionPlan {
     pub fn new(input: LogicalPlan, exprs: Vec<Expr>) -> Self {
         let input_schema = input.schema();
         let schema = Arc::new(Schema::new(
@@ -94,6 +206,20 @@ impl ProjectPlan {
 
     fn schema(&self) -> &SchemaRef {
         &self.schema
+    }
+}
+
+impl std::fmt::Display for ProjectionPlan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Projection: {}",
+            self.exprs
+                .iter()
+                .map(|expr| expr.to_string())
+                .collect::<Vec<String>>()
+                .join(", ")
+        )
     }
 }
 
@@ -126,6 +252,25 @@ impl AggregatePlan {
 
     fn schema(&self) -> &SchemaRef {
         &self.schema
+    }
+}
+
+impl std::fmt::Display for AggregatePlan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Aggregation: groupBy={}, aggExpr={}",
+            self.group_exprs
+                .iter()
+                .map(|expr| expr.to_string())
+                .collect::<Vec<String>>()
+                .join(", "),
+            self.agg_exprs
+                .iter()
+                .map(|expr| expr.to_string())
+                .collect::<Vec<String>>()
+                .join(", ")
+        )
     }
 }
 
@@ -178,11 +323,65 @@ struct JoinPlan {
 }
 
 impl JoinPlan {
-    fn new(left: LogicalPlan, right: LogicalPlan, how: JoinType, on: JoinKey) -> Self {
-        todo!()
+    fn new(left: LogicalPlan, right: LogicalPlan, how: JoinType, on: Vec<JoinKey>) -> Self {
+        let duplicate_keys = on
+            .iter()
+            .filter(|jk| jk.left == jk.right)
+            .map(|jk| jk.left.as_str())
+            .collect::<HashSet<&str>>();
+
+        let fields = match how {
+            JoinType::Inner | JoinType::Left => left
+                .schema()
+                .fields()
+                .iter()
+                .chain(
+                    right
+                        .schema()
+                        .fields()
+                        .iter()
+                        .filter(|f| !duplicate_keys.contains(f.name().as_str())),
+                )
+                .cloned()
+                .collect::<Vec<_>>(),
+            JoinType::Right => left
+                .schema()
+                .fields()
+                .iter()
+                .filter(|f| !duplicate_keys.contains(f.name().as_str()))
+                .chain(right.schema().fields().iter())
+                // this is cheap Arc cloning
+                .cloned()
+                .collect::<Vec<_>>(),
+        };
+
+        let schema = Arc::new(Schema::new(fields));
+
+        Self {
+            left,
+            right,
+            how,
+            on,
+            schema,
+        }
     }
 
     fn schema(&self) -> &SchemaRef {
         &self.schema
+    }
+}
+
+impl std::fmt::Display for JoinPlan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Join: type={}, on={}",
+            self.how,
+            self.on
+                .iter()
+                .map(|expr| expr.to_string())
+                .collect::<Vec<String>>()
+                .join(", ")
+        )
     }
 }

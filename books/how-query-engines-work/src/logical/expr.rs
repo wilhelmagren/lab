@@ -65,7 +65,7 @@ use arrow::datatypes::{DataType, Field, FieldRef, Schema};
 use crate::scalar::ScalarValue;
 
 #[derive(Clone)]
-enum ExprKind {
+pub enum ExprKind {
     Column(ColumnExpr),
     Literal(LiteralExpr),
     Binary(BinaryExpr),
@@ -93,23 +93,23 @@ impl Expr {
     }
 }
 
-impl std::fmt::Display for ExprKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self)
-    }
-}
-
 #[derive(Clone)]
 pub struct Expr(Arc<ExprKind>);
 
 impl std::fmt::Display for Expr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self)
+        match self.kind() {
+            ExprKind::Column(expr) => expr.fmt(f),
+            ExprKind::Literal(expr) => expr.fmt(f),
+            ExprKind::Binary(expr) => expr.fmt(f),
+            ExprKind::Aggregate(expr) => expr.fmt(f),
+            ExprKind::Alias(expr) => expr.fmt(f),
+        }
     }
 }
 
 #[derive(Clone)]
-struct ColumnExpr {
+pub struct ColumnExpr {
     name: String,
 }
 
@@ -136,7 +136,7 @@ pub fn col(name: impl Into<String>) -> Expr {
 }
 
 #[derive(Clone)]
-struct LiteralExpr {
+pub struct LiteralExpr {
     value: ScalarValue,
 }
 
@@ -153,6 +153,38 @@ impl LiteralExpr {
 impl std::fmt::Display for LiteralExpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.value)
+    }
+}
+
+pub fn lit(value: impl Into<ScalarValue>) -> Expr {
+    Expr::new(ExprKind::Literal(LiteralExpr {
+        value: value.into(),
+    }))
+}
+
+impl From<ScalarValue> for Expr {
+    fn from(value: ScalarValue) -> Self {
+        Expr::new(ExprKind::Literal(LiteralExpr { value }))
+    }
+}
+
+macro_rules! impl_expr_from_scalar {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl From<$ty> for Expr {
+                fn from(value: $ty) -> Self {
+                    lit(value)
+                }
+            }
+        )*
+    };
+}
+
+impl_expr_from_scalar!(bool, i8, i16, i32, i64, u8, u16, u32, u64, f32, f64, String);
+
+impl From<&str> for Expr {
+    fn from(value: &str) -> Self {
+        lit(value)
     }
 }
 
@@ -221,7 +253,7 @@ impl std::fmt::Display for BinaryOp {
 }
 
 #[derive(Clone)]
-struct BinaryExpr {
+pub struct BinaryExpr {
     name: String,
     left: Expr,
     op: BinaryOp,
@@ -233,26 +265,9 @@ impl BinaryExpr {
         let lf = self.left.to_field(input);
         let rf = self.right.to_field(input);
 
-        let dtype = match self.op {
-            BinaryOp::Eq
-            | BinaryOp::NotEq
-            | BinaryOp::Gt
-            | BinaryOp::GtEq
-            | BinaryOp::Lt
-            | BinaryOp::LtEq
-            | BinaryOp::And
-            | BinaryOp::Or => DataType::Boolean,
-            // TODO: coercion of datatype, right now only take left expr
-            BinaryOp::Add
-            | BinaryOp::Subtract
-            | BinaryOp::Multiply
-            | BinaryOp::Divide
-            | BinaryOp::Modulus => lf.data_type().clone(),
-        };
-
         Arc::new(Field::new(
             &self.name,
-            dtype,
+            self.op.result_data_type(lf.data_type(), rf.data_type()),
             lf.is_nullable() || rf.is_nullable(),
         ))
     }
@@ -277,13 +292,131 @@ pub fn eq(left: Expr, right: Expr) -> Expr {
     binary("eq", left, BinaryOp::Eq, right)
 }
 
-// TODO: all binary ops...
+pub fn neq(left: Expr, right: Expr) -> Expr {
+    binary("neq", left, BinaryOp::NotEq, right)
+}
+
+pub fn gt(left: Expr, right: Expr) -> Expr {
+    binary("gt", left, BinaryOp::Gt, right)
+}
+
+pub fn gteq(left: Expr, right: Expr) -> Expr {
+    binary("gteq", left, BinaryOp::GtEq, right)
+}
+
+pub fn lt(left: Expr, right: Expr) -> Expr {
+    binary("lt", left, BinaryOp::Lt, right)
+}
+
+pub fn lteq(left: Expr, right: Expr) -> Expr {
+    binary("lteq", left, BinaryOp::LtEq, right)
+}
+
+pub fn and(left: Expr, right: Expr) -> Expr {
+    binary("and", left, BinaryOp::And, right)
+}
+
+pub fn or(left: Expr, right: Expr) -> Expr {
+    binary("or", left, BinaryOp::Or, right)
+}
+
+pub fn add(left: Expr, right: Expr) -> Expr {
+    binary("add", left, BinaryOp::Add, right)
+}
+
+pub fn subtract(left: Expr, right: Expr) -> Expr {
+    binary("subtract", left, BinaryOp::Subtract, right)
+}
+
+pub fn multiply(left: Expr, right: Expr) -> Expr {
+    binary("multiply", left, BinaryOp::Multiply, right)
+}
+
+pub fn divide(left: Expr, right: Expr) -> Expr {
+    binary("divide", left, BinaryOp::Divide, right)
+}
+
+pub fn modulus(left: Expr, right: Expr) -> Expr {
+    binary("modulus", left, BinaryOp::Modulus, right)
+}
+
+impl<Rhs> std::ops::Add<Rhs> for Expr
+where
+    Rhs: Into<Expr>,
+{
+    type Output = Expr;
+    fn add(self, rhs: Rhs) -> Self::Output {
+        add(self, rhs.into())
+    }
+}
+
+impl<Rhs> std::ops::Sub<Rhs> for Expr
+where
+    Rhs: Into<Expr>,
+{
+    type Output = Expr;
+    fn sub(self, rhs: Rhs) -> Self::Output {
+        subtract(self, rhs.into())
+    }
+}
+
+impl<Rhs> std::ops::Mul<Rhs> for Expr
+where
+    Rhs: Into<Expr>,
+{
+    type Output = Expr;
+    fn mul(self, rhs: Rhs) -> Self::Output {
+        multiply(self, rhs.into())
+    }
+}
+
+impl<Rhs> std::ops::Div<Rhs> for Expr
+where
+    Rhs: Into<Expr>,
+{
+    type Output = Expr;
+    fn div(self, rhs: Rhs) -> Self::Output {
+        divide(self, rhs.into())
+    }
+}
+
+impl<Rhs> std::ops::Rem<Rhs> for Expr
+where
+    Rhs: Into<Expr>,
+{
+    type Output = Expr;
+    fn rem(self, rhs: Rhs) -> Self::Output {
+        modulus(self, rhs.into())
+    }
+}
+
+// we can not overload '&&' or '||' in Rust so we use these instead
+impl<Rhs> std::ops::BitAnd<Rhs> for Expr
+where
+    Rhs: Into<Expr>,
+{
+    type Output = Expr;
+    fn bitand(self, rhs: Rhs) -> Self::Output {
+        and(self, rhs.into())
+    }
+}
+
+impl<Rhs> std::ops::BitOr<Rhs> for Expr
+where
+    Rhs: Into<Expr>,
+{
+    type Output = Expr;
+    fn bitor(self, rhs: Rhs) -> Self::Output {
+        or(self, rhs.into())
+    }
+}
 
 #[derive(Clone)]
 enum AggregateOp {
     Min,
     Max,
     Avg,
+    Sum,
     Count,
 }
 
@@ -293,6 +426,7 @@ impl std::fmt::Display for AggregateOp {
             Self::Min => "MIN",
             Self::Max => "MAX",
             Self::Avg => "AVG",
+            Self::Sum => "SUM",
             Self::Count => "COUNT",
         };
         write!(f, "{}", s)
@@ -300,7 +434,7 @@ impl std::fmt::Display for AggregateOp {
 }
 
 #[derive(Clone)]
-struct AggregateExpr {
+pub struct AggregateExpr {
     name: String,
     op: AggregateOp,
     expr: Expr,
@@ -328,8 +462,36 @@ impl std::fmt::Display for AggregateExpr {
     }
 }
 
+fn aggregate(name: impl Into<String>, op: AggregateOp, expr: Expr) -> Expr {
+    Expr::new(ExprKind::Aggregate(AggregateExpr {
+        name: name.into(),
+        op,
+        expr,
+    }))
+}
+
+pub fn min(expr: Expr) -> Expr {
+    aggregate("min", AggregateOp::Min, expr)
+}
+
+pub fn max(expr: Expr) -> Expr {
+    aggregate("max", AggregateOp::Max, expr)
+}
+
+pub fn avg(expr: Expr) -> Expr {
+    aggregate("avg", AggregateOp::Avg, expr)
+}
+
+pub fn sum(expr: Expr) -> Expr {
+    aggregate("sum", AggregateOp::Sum, expr)
+}
+
+pub fn count(expr: Expr) -> Expr {
+    aggregate("count", AggregateOp::Count, expr)
+}
+
 #[derive(Clone)]
-struct AliasExpr {
+pub struct AliasExpr {
     expr: Expr,
     name: String,
 }
@@ -349,4 +511,11 @@ impl std::fmt::Display for AliasExpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} AS {}", self.expr, self.name)
     }
+}
+
+pub fn alias(expr: Expr, name: impl Into<String>) -> Expr {
+    Expr::new(ExprKind::Alias(AliasExpr {
+        expr,
+        name: name.into(),
+    }))
 }

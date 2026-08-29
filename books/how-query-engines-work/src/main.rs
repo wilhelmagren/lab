@@ -1,5 +1,5 @@
 pub mod logical;
-pub mod datasource;
+pub mod data_source;
 pub mod physical;
 pub mod optimizer;
 pub mod dataframe;
