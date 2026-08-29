@@ -21,7 +21,6 @@ pub trait ColumnArray: std::fmt::Debug {
 #[derive(Clone, Debug, PartialEq)]
 pub enum ScalarValue {
     Null,
-
     Boolean(bool),
     Int8(i8),
     Int16(i16),
@@ -39,19 +38,19 @@ pub enum ScalarValue {
 impl ScalarValue {
     pub fn dtype(&self) -> DataType {
         match self {
-            ScalarValue::Null => DataType::Null,
-            ScalarValue::Boolean(_) => DataType::Boolean,
-            ScalarValue::Int8(_) => DataType::Int8,
-            ScalarValue::Int16(_) => DataType::Int16,
-            ScalarValue::Int32(_) => DataType::Int32,
-            ScalarValue::Int64(_) => DataType::Int64,
-            ScalarValue::UInt8(_) => DataType::UInt8,
-            ScalarValue::UInt16(_) => DataType::UInt16,
-            ScalarValue::UInt32(_) => DataType::UInt32,
-            ScalarValue::UInt64(_) => DataType::UInt64,
-            ScalarValue::Float32(_) => DataType::Float32,
-            ScalarValue::Float64(_) => DataType::Float64,
-            ScalarValue::Utf8(_) => DataType::Utf8,
+            Self::Null => DataType::Null,
+            Self::Boolean(_) => DataType::Boolean,
+            Self::Int8(_) => DataType::Int8,
+            Self::Int16(_) => DataType::Int16,
+            Self::Int32(_) => DataType::Int32,
+            Self::Int64(_) => DataType::Int64,
+            Self::UInt8(_) => DataType::UInt8,
+            Self::UInt16(_) => DataType::UInt16,
+            Self::UInt32(_) => DataType::UInt32,
+            Self::UInt64(_) => DataType::UInt64,
+            Self::Float32(_) => DataType::Float32,
+            Self::Float64(_) => DataType::Float64,
+            Self::Utf8(_) => DataType::Utf8,
         }
     }
 }
@@ -59,20 +58,105 @@ impl ScalarValue {
 impl std::fmt::Display for ScalarValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ScalarValue::Null => write!(f, "NULL"),
-            ScalarValue::Boolean(v) => write!(f, "{}", v),
-            ScalarValue::Int8(v) => write!(f, "{}", v),
-            ScalarValue::Int16(v) => write!(f, "{}", v),
-            ScalarValue::Int32(v) => write!(f, "{}", v),
-            ScalarValue::Int64(v) => write!(f, "{}", v),
-            ScalarValue::UInt8(v) => write!(f, "{}", v),
-            ScalarValue::UInt16(v) => write!(f, "{}", v),
-            ScalarValue::UInt32(v) => write!(f, "{}", v),
-            ScalarValue::UInt64(v) => write!(f, "{}", v),
-            ScalarValue::Float32(v) => write!(f, "{}", v),
-            ScalarValue::Float64(v) => write!(f, "{}", v),
-            ScalarValue::Utf8(v) => write!(f, "'{}'", v),
+            Self::Null => write!(f, "NULL"),
+            Self::Boolean(v) => write!(f, "{}", v),
+            Self::Int8(v) => write!(f, "{}", v),
+            Self::Int16(v) => write!(f, "{}", v),
+            Self::Int32(v) => write!(f, "{}", v),
+            Self::Int64(v) => write!(f, "{}", v),
+            Self::UInt8(v) => write!(f, "{}", v),
+            Self::UInt16(v) => write!(f, "{}", v),
+            Self::UInt32(v) => write!(f, "{}", v),
+            Self::UInt64(v) => write!(f, "{}", v),
+            Self::Float32(v) => write!(f, "{}", v),
+            Self::Float64(v) => write!(f, "{}", v),
+            Self::Utf8(v) => write!(f, "'{}'", v),
         }
+    }
+}
+
+// this is a hack to make us easy do lit(None), but doesn't work for lit(Some...) obvsiously
+impl From<Option<bool>> for ScalarValue {
+    fn from(_value: Option<bool>) -> Self {
+        Self::Null
+    }
+}
+
+impl From<bool> for ScalarValue {
+    fn from(value: bool) -> Self {
+        Self::Boolean(value)
+    }
+}
+
+impl From<i8> for ScalarValue {
+    fn from(value: i8) -> Self {
+        Self::Int8(value)
+    }
+}
+
+impl From<i16> for ScalarValue {
+    fn from(value: i16) -> Self {
+        Self::Int16(value)
+    }
+}
+
+impl From<i32> for ScalarValue {
+    fn from(value: i32) -> Self {
+        Self::Int32(value)
+    }
+}
+
+impl From<i64> for ScalarValue {
+    fn from(value: i64) -> Self {
+        Self::Int64(value)
+    }
+}
+
+impl From<u8> for ScalarValue {
+    fn from(value: u8) -> Self {
+        Self::UInt8(value)
+    }
+}
+
+impl From<u16> for ScalarValue {
+    fn from(value: u16) -> Self {
+        Self::UInt16(value)
+    }
+}
+
+impl From<u32> for ScalarValue {
+    fn from(value: u32) -> Self {
+        Self::UInt32(value)
+    }
+}
+
+impl From<u64> for ScalarValue {
+    fn from(value: u64) -> Self {
+        Self::UInt64(value)
+    }
+}
+
+impl From<f32> for ScalarValue {
+    fn from(value: f32) -> Self {
+        Self::Float32(value)
+    }
+}
+
+impl From<f64> for ScalarValue {
+    fn from(value: f64) -> Self {
+        Self::Float64(value)
+    }
+}
+
+impl From<&str> for ScalarValue {
+    fn from(value: &str) -> Self {
+        Self::Utf8(value.to_string())
+    }
+}
+
+impl From<String> for ScalarValue {
+    fn from(value: String) -> Self {
+        Self::Utf8(value)
     }
 }
 

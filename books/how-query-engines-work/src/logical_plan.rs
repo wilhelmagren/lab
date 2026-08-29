@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use arrow::datatypes::{DataType, Field, FieldRef};
+use arrow::{
+    array::Scalar,
+    datatypes::{DataType, Field, FieldRef},
+};
 
 use crate::{
     array::ScalarValue, data_source::DataSourceRef, data_source::ScanProjection, schema::Schema,
@@ -75,6 +78,10 @@ pub fn column(name: impl Into<String>) -> LogicalExprRef {
     Arc::new(ColumnExpr { name: name.into() })
 }
 
+pub fn col(name: impl Into<String>) -> LogicalExprRef {
+    Arc::new(ColumnExpr { name: name.into() })
+}
+
 pub struct LiteralExpr {
     value: ScalarValue,
 }
@@ -94,6 +101,13 @@ impl LogicalExpr for LiteralExpr {
             false,
         ))
     }
+}
+
+pub fn lit<T>(t: T) -> LogicalExprRef
+where
+    T: Into<ScalarValue>,
+{
+    Arc::new(LiteralExpr { value: t.into() })
 }
 
 pub fn lit_string(s: impl Into<String>) -> LogicalExprRef {
@@ -606,4 +620,64 @@ impl std::fmt::Display for Aggregate {
     }
 }
 
-// TODO: join logicalplan
+pub enum JoinType {
+    Inner,
+    Left,
+    Right,
+}
+
+impl std::fmt::Display for JoinType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::Inner => "inner",
+            Self::Left => "left",
+            Self::Right => "right",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+pub struct Join {
+    l: LogicalPlanRef,
+    r: LogicalPlanRef,
+    how: JoinType,
+    on: Vec<(String, String)>,
+}
+
+impl Join {
+    pub fn new(
+        l: LogicalPlanRef,
+        r: LogicalPlanRef,
+        how: JoinType,
+        on: Vec<(String, String)>,
+    ) -> Self {
+        Self { l, r, how, on }
+    }
+}
+
+impl LogicalPlan for Join {
+    fn schema(&self) -> SchemaRef {
+        // this depends on the join type, im too lazy to do now
+        // TODO: do this xd
+        todo!()
+    }
+
+    fn children(&self) -> Option<Vec<LogicalPlanRef>> {
+        Some(vec![self.l.clone(), self.r.clone()])
+    }
+}
+
+impl std::fmt::Display for Join {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Join: how={}, on={}",
+            self.how,
+            self.on
+                .iter()
+                .map(|(l, r)| format!("{}={}", l, r))
+                .collect::<Vec<String>>()
+                .join(",")
+        )
+    }
+}
