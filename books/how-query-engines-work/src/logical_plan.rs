@@ -1,9 +1,6 @@
 use std::sync::Arc;
 
-use arrow::{
-    array::Scalar,
-    datatypes::{DataType, Field, FieldRef},
-};
+use arrow::datatypes::{DataType, Field, FieldRef};
 
 use crate::{
     array::ScalarValue, data_source::DataSourceRef, data_source::ScanProjection, schema::Schema,
