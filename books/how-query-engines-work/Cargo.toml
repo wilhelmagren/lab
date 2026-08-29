@@ -5,3 +5,5 @@ edition = "2024"
 
 [dependencies]
 arrow = "59.2.0"
+arrow-csv = "59.2.0"
+parquet = "59.2.0"
