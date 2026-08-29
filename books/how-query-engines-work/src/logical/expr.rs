@@ -65,15 +65,6 @@ use arrow::datatypes::{DataType, Field, FieldRef, Schema};
 use crate::scalar::ScalarValue;
 
 #[derive(Clone)]
-pub struct Expr(Arc<ExprKind>);
-
-impl std::fmt::Display for Expr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self)
-    }
-}
-
-#[derive(Clone)]
 enum ExprKind {
     Column(ColumnExpr),
     Literal(LiteralExpr),
@@ -103,6 +94,15 @@ impl Expr {
 }
 
 impl std::fmt::Display for ExprKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
+#[derive(Clone)]
+pub struct Expr(Arc<ExprKind>);
+
+impl std::fmt::Display for Expr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self)
     }

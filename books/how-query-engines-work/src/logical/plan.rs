@@ -6,11 +6,11 @@ use crate::logical::expr::Expr;
 
 #[derive(Clone)]
 pub enum LogicalPlanKind {
-    Scan(Scan),
-    Filter(Filter),
-    Project(Project),
-    Aggregate(Aggregate),
-    Join(Join),
+    Scan(ScanPlan),
+    Filter(FilterPlan),
+    Project(ProjectPlan),
+    Aggregate(AggregatePlan),
+    Join(JoinPlan),
 }
 
 #[derive(Clone)]
@@ -21,42 +21,67 @@ impl LogicalPlan {
         self.0.as_ref()
     }
 
-    pub fn schema(&self) -> &Schema {
+    pub fn schema(&self) -> &SchemaRef {
         match self.kind() {
-            LogicalPlanKind::Scan(s) => todo!(),
-            _ => todo!(),
+            LogicalPlanKind::Scan(sp) => todo!(),
+            LogicalPlanKind::Filter(fp) => fp.schema(),
+            LogicalPlanKind::Project(pp) => pp.schema(),
+            LogicalPlanKind::Aggregate(ap) => ap.schema(),
+            LogicalPlanKind::Join(jp) => jp.schema(),
         }
     }
 }
 
 #[derive(Clone)]
-struct Scan {
+struct ScanPlan {
     // scan has no input because this is always a leaf node in the AST
     path: String,
-    schema: SchemaRef,
     projection: Option<Vec<String>>,
+    schema: SchemaRef,
 }
 
 #[derive(Clone)]
-struct Filter {
+struct FilterPlan {
     input: LogicalPlan,
-    predicates: Expr,
+    predicate: Expr,
+    schema: SchemaRef,
+}
+
+impl FilterPlan {
+    pub fn new(input: LogicalPlan, predicate: Expr) -> Self {
+        let schema = input.schema().clone();
+        Self {
+            input,
+            predicate,
+            schema,
+        }
+    }
+
+    fn schema(&self) -> &SchemaRef {
+        &self.schema
+    }
+}
+
+impl std::fmt::Display for FilterPlan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Filter: {}", self.predicate)
+    }
 }
 
 #[derive(Clone)]
-struct Project {
+struct ProjectPlan {
     input: LogicalPlan,
     exprs: Vec<Expr>,
     schema: SchemaRef,
 }
 
-impl Project {
+impl ProjectPlan {
     pub fn new(input: LogicalPlan, exprs: Vec<Expr>) -> Self {
         let input_schema = input.schema();
         let schema = Arc::new(Schema::new(
             exprs
                 .iter()
-                .map(|expr| expr.to_field(input_schema.as_ref()))
+                .map(|expr| expr.to_field(input_schema))
                 .collect::<Vec<_>>(),
         ));
 
@@ -66,13 +91,42 @@ impl Project {
             schema,
         }
     }
+
+    fn schema(&self) -> &SchemaRef {
+        &self.schema
+    }
 }
 
 #[derive(Clone)]
-struct Aggregate {
+struct AggregatePlan {
     input: LogicalPlan,
     group_exprs: Vec<Expr>,
     agg_exprs: Vec<Expr>,
+    schema: SchemaRef,
+}
+
+impl AggregatePlan {
+    pub fn new(input: LogicalPlan, group_exprs: Vec<Expr>, agg_exprs: Vec<Expr>) -> Self {
+        let input_schema = input.schema();
+        let schema = Arc::new(Schema::new(
+            group_exprs
+                .iter()
+                .map(|expr| expr.to_field(input_schema))
+                .chain(agg_exprs.iter().map(|expr| expr.to_field(input_schema)))
+                .collect::<Vec<_>>(),
+        ));
+
+        Self {
+            input,
+            group_exprs,
+            agg_exprs,
+            schema,
+        }
+    }
+
+    fn schema(&self) -> &SchemaRef {
+        &self.schema
+    }
 }
 
 #[derive(Clone)]
@@ -115,9 +169,20 @@ impl std::fmt::Display for JoinKey {
 }
 
 #[derive(Clone)]
-struct Join {
+struct JoinPlan {
     left: LogicalPlan,
     right: LogicalPlan,
     how: JoinType,
     on: Vec<JoinKey>,
+    schema: SchemaRef,
+}
+
+impl JoinPlan {
+    fn new(left: LogicalPlan, right: LogicalPlan, how: JoinType, on: JoinKey) -> Self {
+        todo!()
+    }
+
+    fn schema(&self) -> &SchemaRef {
+        &self.schema
+    }
 }
