@@ -21,6 +21,7 @@ pub trait ColumnArray: std::fmt::Debug {
 #[derive(Clone, Debug, PartialEq)]
 pub enum ScalarValue {
     Null,
+
     Boolean(bool),
     Int8(i8),
     Int16(i16),
@@ -33,6 +34,46 @@ pub enum ScalarValue {
     Float32(f32),
     Float64(f64),
     Utf8(String),
+}
+
+impl ScalarValue {
+    pub fn dtype(&self) -> DataType {
+        match self {
+            ScalarValue::Null => DataType::Null,
+            ScalarValue::Boolean(_) => DataType::Boolean,
+            ScalarValue::Int8(_) => DataType::Int8,
+            ScalarValue::Int16(_) => DataType::Int16,
+            ScalarValue::Int32(_) => DataType::Int32,
+            ScalarValue::Int64(_) => DataType::Int64,
+            ScalarValue::UInt8(_) => DataType::UInt8,
+            ScalarValue::UInt16(_) => DataType::UInt16,
+            ScalarValue::UInt32(_) => DataType::UInt32,
+            ScalarValue::UInt64(_) => DataType::UInt64,
+            ScalarValue::Float32(_) => DataType::Float32,
+            ScalarValue::Float64(_) => DataType::Float64,
+            ScalarValue::Utf8(_) => DataType::Utf8,
+        }
+    }
+}
+
+impl std::fmt::Display for ScalarValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ScalarValue::Null => write!(f, "NULL"),
+            ScalarValue::Boolean(v) => write!(f, "{}", v),
+            ScalarValue::Int8(v) => write!(f, "{}", v),
+            ScalarValue::Int16(v) => write!(f, "{}", v),
+            ScalarValue::Int32(v) => write!(f, "{}", v),
+            ScalarValue::Int64(v) => write!(f, "{}", v),
+            ScalarValue::UInt8(v) => write!(f, "{}", v),
+            ScalarValue::UInt16(v) => write!(f, "{}", v),
+            ScalarValue::UInt32(v) => write!(f, "{}", v),
+            ScalarValue::UInt64(v) => write!(f, "{}", v),
+            ScalarValue::Float32(v) => write!(f, "{}", v),
+            ScalarValue::Float64(v) => write!(f, "{}", v),
+            ScalarValue::Utf8(v) => write!(f, "'{}'", v),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

@@ -4,31 +4,46 @@ pub mod logical_plan;
 pub mod record_batch;
 pub mod schema;
 
-use std::time::Instant;
+use std::sync::Arc;
 
-use data_source::DataSource;
+use crate::{
+    data_source::{ParquetDataSource, ScanProjection},
+    logical_plan::{
+        Aggregate, Filter, LogicalPlan, Projection, Scan, alias, avg, column, eq, lit_double,
+        lit_string, multiply,
+    },
+};
 
-// 1 billion rows:
-// my record batch takes 15seconds
-// arrow record batches takes same amount of time :)
 fn main() {
-    let now = Instant::now();
-    let mut ds = data_source::ParquetDataSource::new("data/weather_stations_small.parquet".into());
+    let path = "data/weather_stations_small.parquet".to_string();
+    let data_source = Arc::new(ParquetDataSource::new(path.clone()));
+    let projection = Some(ScanProjection::new(
+        ["station_name".to_string(), "measurement".to_string()].to_vec(),
+    ));
 
-    let mut n_rows = 0;
-    let mut n_batches = 0;
+    let scan = Arc::new(Scan::new(data_source, projection));
 
-    for rb in ds.scan(&["station_name", "measurement"]).into_iter() {
-        n_rows += rb.row_count();
-        n_batches += 1;
-    }
+    let filter = Arc::new(Filter::new(
+        scan,
+        eq(column("station_name"), lit_string("tokyo")),
+    ));
 
-    let elapsed = now.elapsed();
+    let project = Arc::new(Projection::new(
+        filter,
+        vec![
+            alias(column("station_name"), "station"),
+            alias(
+                multiply(column("measurement"), lit_double(1.2)),
+                "new_measurement",
+            ),
+        ],
+    ));
 
-    println!(
-        "{n_rows} rows across {n_batches} batches, took {}s ({}ms, {}μs)",
-        elapsed.as_secs(),
-        elapsed.as_millis(),
-        elapsed.as_micros()
-    );
+    let agg = Arc::new(Aggregate::new(
+        project,
+        vec![column("station")],
+        vec![alias(avg(column("new_measurement")), "avg_measurement")],
+    ));
+
+    println!("{}", agg.format(0));
 }

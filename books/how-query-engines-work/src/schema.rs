@@ -1,6 +1,4 @@
-use arrow::datatypes::{
-    Field, FieldRef, Fields, Schema as ArrowSchema, SchemaRef as ArrowSchemaRef,
-};
+use arrow::datatypes::{FieldRef, Fields, Schema as ArrowSchema, SchemaRef as ArrowSchemaRef};
 use std::sync::Arc;
 
 pub type SchemaRef = Arc<Schema>;
@@ -11,9 +9,12 @@ pub struct Schema {
 }
 
 impl Schema {
-    pub fn new(fields: impl IntoIterator<Item = Field>) -> Self {
+    pub fn from_fields<T>(fields: impl IntoIterator<Item = T>) -> Self
+    where
+        T: Into<FieldRef>,
+    {
         Self {
-            fields: fields.into_iter().collect(),
+            fields: fields.into_iter().map(Into::into).collect(),
         }
     }
 
@@ -80,7 +81,7 @@ impl Schema {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow::datatypes::DataType;
+    use arrow::datatypes::{DataType, Field};
 
     #[test]
     fn new() {
@@ -89,7 +90,7 @@ mod tests {
             Field::new("pizza", DataType::Float64, false),
         ];
 
-        let s = Schema::new(fields.clone());
+        let s = Schema::from_fields(fields.clone());
         assert_eq!(s.fields, fields.into());
     }
 
@@ -100,8 +101,8 @@ mod tests {
             Field::new("pizza", DataType::Float64, false),
             Field::new("xd", DataType::Float64, false),
         ];
-        let s = Schema::new(fields.clone()).project([0, 2]);
-        let expected = Schema::new(vec![
+        let s = Schema::from_fields(fields.clone()).project([0, 2]);
+        let expected = Schema::from_fields(vec![
             Field::new("kebab", DataType::Int32, true),
             Field::new("xd", DataType::Float64, false),
         ]);
@@ -115,7 +116,7 @@ mod tests {
             Field::new("kebab", DataType::Int32, true),
             Field::new("pizza", DataType::Float64, false),
         ];
-        let _ = Schema::new(fields.clone()).project([3]);
+        let _ = Schema::from_fields(fields.clone()).project([3]);
     }
 
     #[test]
@@ -126,8 +127,8 @@ mod tests {
             Field::new("xd", DataType::Float64, false),
             Field::new("jockeboy", DataType::Float64, false),
         ];
-        let s = Schema::new(fields.clone()).select(["pizza", "jockeboy"]);
-        let expected = Schema::new(vec![
+        let s = Schema::from_fields(fields.clone()).select(["pizza", "jockeboy"]);
+        let expected = Schema::from_fields(vec![
             Field::new("pizza", DataType::Float64, false),
             Field::new("jockeboy", DataType::Float64, false),
         ]);
@@ -143,6 +144,6 @@ mod tests {
             Field::new("xd", DataType::Float64, false),
             Field::new("jockeboy", DataType::Float64, false),
         ];
-        let _ = Schema::new(fields.clone()).select(["pizza", "elden_ring"]);
+        let _ = Schema::from_fields(fields.clone()).select(["pizza", "elden_ring"]);
     }
 }

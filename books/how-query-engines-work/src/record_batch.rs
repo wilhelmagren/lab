@@ -2,7 +2,7 @@ use crate::array::{ColumnArrayRef, new_empty_column_array};
 use crate::schema::SchemaRef;
 
 /// Record batches enable batch processing; process chunks of like 10k rows instead of row-by-row.
-#[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct RecordBatch {
     schema: SchemaRef,
     columns: Vec<ColumnArrayRef>,

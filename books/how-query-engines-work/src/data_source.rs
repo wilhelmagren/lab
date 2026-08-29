@@ -1,6 +1,6 @@
-use arrow_csv::infer_schema_from_files;
+// use arrow_csv::infer_schema_from_files;
 use parquet::arrow::ProjectionMask;
-use parquet::arrow::arrow_reader::{ParquetRecordBatchReader, ParquetRecordBatchReaderBuilder};
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::schema::types::SchemaDescriptor;
 
 use std::fs;
@@ -10,11 +10,39 @@ use crate::array::column_arrays_from_arrow;
 use crate::record_batch::RecordBatch;
 use crate::schema::{Schema, SchemaRef};
 
-pub trait DataSource {
-    fn schema(&self) -> SchemaRef;
-    fn scan(&mut self, projection: &[&str]) -> impl Iterator<Item = RecordBatch>;
+pub struct ScanProjection {
+    names: Vec<String>,
 }
 
+impl ScanProjection {
+    pub fn new(names: Vec<String>) -> Self {
+        Self { names }
+    }
+
+    pub fn indices(&self, schema: SchemaRef) -> Vec<usize> {
+        self.names
+            .iter()
+            .map(|n| schema.fields().find(n).unwrap().0)
+            .collect()
+    }
+}
+
+impl std::fmt::Display for ScanProjection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[{}]", self.names.join(","))
+    }
+}
+
+pub type DataSourceRef = Arc<dyn DataSource>;
+pub type RecordBatchIteratorRef<'a> = Box<dyn Iterator<Item = RecordBatch> + 'a>;
+
+pub trait DataSource {
+    fn name(&self) -> &str;
+    fn schema(&self) -> SchemaRef;
+    fn scan(&self, projection: Option<ScanProjection>) -> RecordBatchIteratorRef<'_>;
+}
+
+/*
 pub struct CsvDataSource {
     filename: String,
     schema: SchemaRef,
@@ -44,7 +72,6 @@ impl CsvDataSource {
     }
 }
 
-/*
 impl DataSource for CsvDataSource {
     fn schema(&self) -> SchemaRef {
         self.schema.clone()
@@ -93,25 +120,32 @@ impl ParquetDataSource {
 }
 
 impl DataSource for ParquetDataSource {
+    fn name(&self) -> &str {
+        &self.filename
+    }
+
     fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }
 
-    fn scan(&mut self, projection: &[&str]) -> impl Iterator<Item = RecordBatch> {
-        let reader =
+    fn scan(&self, projection: Option<ScanProjection>) -> RecordBatchIteratorRef<'_> {
+        let mut builder =
             ParquetRecordBatchReaderBuilder::try_new(fs::File::open(&self.filename).unwrap())
-                .unwrap()
-                // fuck this shitty as api
-                .with_projection(ProjectionMask::roots(
-                    &self.parquet_schema,
-                    self.schema.projection_mask(projection),
-                ))
-                .build()
                 .unwrap();
 
-        self.schema = Arc::new(self.schema.select(projection));
+        if let Some(proj) = projection {
+            builder = builder.with_projection(ProjectionMask::roots(
+                &self.parquet_schema,
+                proj.indices(self.schema.clone()),
+            ));
 
-        reader
+            // we need to update the data source schema with only projected cols
+            // self.schema = Arc::new(self.schema.project(proj.indices(self.schema.clone())));
+        };
+
+        let reader = builder.build().unwrap();
+
+        let iter = reader
             .into_iter()
             // fuck it we ball, what could go wrong
             .map(|maybe_rb| maybe_rb.unwrap())
@@ -121,6 +155,8 @@ impl DataSource for ParquetDataSource {
                     column_arrays_from_arrow(rb.columns()),
                     rb.num_rows(),
                 )
-            })
+            });
+
+        Box::new(iter)
     }
 }
