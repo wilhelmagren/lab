@@ -49,8 +49,7 @@ pub type LogicalExprRef = Arc<dyn LogicalExpr>;
 /// Loigcal Expression for use in logical query plans. The logical expression provides
 /// information needed during the planning phase such as the name and dtype of the exprs.
 pub trait LogicalExpr: std::fmt::Display {
-    /// Return metadata about the value that will be produced by the this expression
-    /// when evaluated against a particular input.
+    /// Return metadata about the value that will be produced by the this expression when evaluated against a particular input.
     fn to_field(&self, input: LogicalPlanRef) -> FieldRef;
 }
 
