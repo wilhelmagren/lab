@@ -946,6 +946,7 @@ name = "tqe"
 version = "0.1.0"
 dependencies = [
  "arrow",
+ "arrow-arith",
  "parquet",
 ]
 

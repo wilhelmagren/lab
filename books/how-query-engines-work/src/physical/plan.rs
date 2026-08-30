@@ -1,41 +1,11 @@
-pub mod expr;
-pub mod plan;
-
 use std::sync::Arc;
 
-use arrow::{
-    array::{ArrayRef, Scalar},
-    datatypes::SchemaRef,
-};
+use arrow::datatypes::SchemaRef;
 
 use crate::data_source::RecordBatchIterator;
 
 #[derive(Clone)]
-pub enum PhysicalPlanKind {
-    Projection(ProjectionExec),
-}
-
-// Projection evaluates arbitrary expressions to produce new columns.
-pub struct ProjectionExec {
-    input: PhysicalPlan,
-    schema: SchemaRef,
-    exprs: Vec<PhysicalExpr>,
-}
-
-impl ProjectionExec {
-    pub fn schema(&self) -> &SchemaRef {
-        &self.schema
-    }
-
-    pub fn input(&self) -> &PhysicalPlan {
-        &self.input
-    }
-
-    pub fn execute(&self) -> RecordBatchIterator<'_> {}
-}
-
-// this is a physical expr, not to mix with logical
-pub struct PhysicalExpr {}
+pub enum PhysicalPlanKind {}
 
 #[derive(Clone)]
 pub struct PhysicalPlan(Arc<PhysicalPlanKind>);

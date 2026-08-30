@@ -1,63 +1,3 @@
-//! Logical expression AST.
-//!
-//! ```text
-//! Expr
-//! └── Arc<ExprKind>
-//!     ├── Column
-//!     │   └── name: String
-//!     │
-//!     ├── Literal
-//!     │   └── value: ScalarValue
-//!     │
-//!     ├── Binary
-//!     │   ├── left: Expr
-//!     │   ├── op: BinaryOp
-//!     │   │   ├── Arithmetic
-//!     │   │   │   ├── Add
-//!     │   │   │   ├── Subtract
-//!     │   │   │   ├── Multiply
-//!     │   │   │   ├── Divide
-//!     │   │   │   └── Modulus
-//!     │   │   │
-//!     │   │   ├── Comparison
-//!     │   │   │   ├── Eq
-//!     │   │   │   ├── NotEq
-//!     │   │   │   ├── Gt
-//!     │   │   │   ├── GtEq
-//!     │   │   │   ├── Lt
-//!     │   │   │   └── LtEq
-//!     │   │   │
-//!     │   │   └── Boolean
-//!     │   │       ├── And
-//!     │   │       └── Or
-//!     │   └── right: Expr
-//!     │
-//!     ├── Aggregate
-//!     │   ├── op: AggregateOp
-//!     │   │   ├── Sum
-//!     │   │   ├── Min
-//!     │   │   ├── Max
-//!     │   │   ├── Avg
-//!     │   │   └── Count
-//!     │   └── expr: Expr
-//!     │
-//!     └── Alias
-//!         ├── expr: Expr
-//!         └── name: String
-//! ```
-//!
-//! Expressions form a recursive tree. For example:
-//!
-//! ```text
-//! (col("salary") * 0.1).alias("bonus")
-//!
-//! Alias
-//! ├── expr: Binary
-//! │   ├── left: Column("salary")
-//! │   ├── op: Multiply
-//! │   └── right: Literal(Float64(0.1))
-//! └── name: "bonus"
-//! ```
 use std::sync::Arc;
 
 use arrow::datatypes::{DataType, Field, FieldRef, Schema};
@@ -65,30 +5,33 @@ use arrow::datatypes::{DataType, Field, FieldRef, Schema};
 use crate::scalar::ScalarValue;
 
 #[derive(Clone)]
-pub enum ExprKind {
-    Column(ColumnExpr),
-    Literal(LiteralExpr),
-    Binary(BinaryExpr),
-    Aggregate(AggregateExpr),
-    Alias(AliasExpr),
+pub enum LogicalExprKind {
+    Column(ColumnLogicalExpr),
+    Literal(LiteralLogicalExpr),
+    Binary(BinaryLogicalExpr),
+    Aggregate(AggregateLogicalExpr),
+    Alias(AliasLogicalExpr),
 }
 
-impl Expr {
-    pub fn new(kind: ExprKind) -> Self {
+#[derive(Clone)]
+pub struct LogicalExpr(Arc<LogicalExprKind>);
+
+impl LogicalExpr {
+    pub fn new(kind: LogicalExprKind) -> Self {
         Self(Arc::new(kind))
     }
 
-    pub fn kind(&self) -> &ExprKind {
+    pub fn kind(&self) -> &LogicalExprKind {
         self.0.as_ref()
     }
 
     pub fn to_field(&self, input: &Schema) -> FieldRef {
         match self.kind() {
-            ExprKind::Column(expr) => expr.to_field(input),
-            ExprKind::Literal(expr) => expr.to_field(),
-            ExprKind::Binary(expr) => expr.to_field(input),
-            ExprKind::Aggregate(expr) => expr.to_field(input),
-            ExprKind::Alias(expr) => expr.to_field(input),
+            LogicalExprKind::Column(expr) => expr.to_field(input),
+            LogicalExprKind::Literal(expr) => expr.to_field(),
+            LogicalExprKind::Binary(expr) => expr.to_field(input),
+            LogicalExprKind::Aggregate(expr) => expr.to_field(input),
+            LogicalExprKind::Alias(expr) => expr.to_field(input),
         }
     }
 
@@ -96,60 +39,57 @@ impl Expr {
         alias(self, name)
     }
 
-    pub fn eq(self, rhs: impl Into<Expr>) -> Self {
+    pub fn eq(self, rhs: impl Into<LogicalExpr>) -> Self {
         eq(self, rhs.into())
     }
 
-    pub fn neq(self, rhs: impl Into<Expr>) -> Self {
+    pub fn neq(self, rhs: impl Into<LogicalExpr>) -> Self {
         neq(self, rhs.into())
     }
 
-    pub fn gt(self, rhs: impl Into<Expr>) -> Self {
+    pub fn gt(self, rhs: impl Into<LogicalExpr>) -> Self {
         gt(self, rhs.into())
     }
 
-    pub fn gteq(self, rhs: impl Into<Expr>) -> Self {
+    pub fn gteq(self, rhs: impl Into<LogicalExpr>) -> Self {
         gteq(self, rhs.into())
     }
 
-    pub fn lt(self, rhs: impl Into<Expr>) -> Self {
+    pub fn lt(self, rhs: impl Into<LogicalExpr>) -> Self {
         lt(self, rhs.into())
     }
 
-    pub fn lteq(self, rhs: impl Into<Expr>) -> Self {
+    pub fn lteq(self, rhs: impl Into<LogicalExpr>) -> Self {
         lteq(self, rhs.into())
     }
 
-    pub fn and(self, rhs: impl Into<Expr>) -> Self {
+    pub fn and(self, rhs: impl Into<LogicalExpr>) -> Self {
         and(self, rhs.into())
     }
 
-    pub fn or(self, rhs: impl Into<Expr>) -> Self {
+    pub fn or(self, rhs: impl Into<LogicalExpr>) -> Self {
         or(self, rhs.into())
     }
 }
 
-#[derive(Clone)]
-pub struct Expr(Arc<ExprKind>);
-
-impl std::fmt::Display for Expr {
+impl std::fmt::Display for LogicalExpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.kind() {
-            ExprKind::Column(expr) => expr.fmt(f),
-            ExprKind::Literal(expr) => expr.fmt(f),
-            ExprKind::Binary(expr) => expr.fmt(f),
-            ExprKind::Aggregate(expr) => expr.fmt(f),
-            ExprKind::Alias(expr) => expr.fmt(f),
+            LogicalExprKind::Column(expr) => expr.fmt(f),
+            LogicalExprKind::Literal(expr) => expr.fmt(f),
+            LogicalExprKind::Binary(expr) => expr.fmt(f),
+            LogicalExprKind::Aggregate(expr) => expr.fmt(f),
+            LogicalExprKind::Alias(expr) => expr.fmt(f),
         }
     }
 }
 
 #[derive(Clone)]
-pub struct ColumnExpr {
+pub struct ColumnLogicalExpr {
     name: String,
 }
 
-impl ColumnExpr {
+impl ColumnLogicalExpr {
     fn to_field(&self, input: &Schema) -> FieldRef {
         input
             .fields()
@@ -160,23 +100,25 @@ impl ColumnExpr {
     }
 }
 
-impl std::fmt::Display for ColumnExpr {
+impl std::fmt::Display for ColumnLogicalExpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "#{}", self.name)
     }
 }
 
 /// Create a column expression.
-pub fn col(name: impl Into<String>) -> Expr {
-    Expr::new(ExprKind::Column(ColumnExpr { name: name.into() }))
+pub fn col(name: impl Into<String>) -> LogicalExpr {
+    LogicalExpr::new(LogicalExprKind::Column(ColumnLogicalExpr {
+        name: name.into(),
+    }))
 }
 
 #[derive(Clone)]
-pub struct LiteralExpr {
+pub struct LiteralLogicalExpr {
     value: ScalarValue,
 }
 
-impl LiteralExpr {
+impl LiteralLogicalExpr {
     fn to_field(&self) -> FieldRef {
         Arc::new(Field::new(
             self.value.to_string(),
@@ -186,28 +128,28 @@ impl LiteralExpr {
     }
 }
 
-impl std::fmt::Display for LiteralExpr {
+impl std::fmt::Display for LiteralLogicalExpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.value)
     }
 }
 
-pub fn lit(value: impl Into<ScalarValue>) -> Expr {
-    Expr::new(ExprKind::Literal(LiteralExpr {
+pub fn lit(value: impl Into<ScalarValue>) -> LogicalExpr {
+    LogicalExpr::new(LogicalExprKind::Literal(LiteralLogicalExpr {
         value: value.into(),
     }))
 }
 
-impl From<ScalarValue> for Expr {
+impl From<ScalarValue> for LogicalExpr {
     fn from(value: ScalarValue) -> Self {
-        Expr::new(ExprKind::Literal(LiteralExpr { value }))
+        LogicalExpr::new(LogicalExprKind::Literal(LiteralLogicalExpr { value }))
     }
 }
 
 macro_rules! impl_expr_from_scalar {
     ($($ty:ty),* $(,)?) => {
         $(
-            impl From<$ty> for Expr {
+            impl From<$ty> for LogicalExpr {
                 fn from(value: $ty) -> Self {
                     lit(value)
                 }
@@ -218,7 +160,7 @@ macro_rules! impl_expr_from_scalar {
 
 impl_expr_from_scalar!(bool, i8, i16, i32, i64, u8, u16, u32, u64, f32, f64, String);
 
-impl From<&str> for Expr {
+impl From<&str> for LogicalExpr {
     fn from(value: &str) -> Self {
         lit(value)
     }
@@ -289,14 +231,14 @@ impl std::fmt::Display for BinaryOp {
 }
 
 #[derive(Clone)]
-pub struct BinaryExpr {
+pub struct BinaryLogicalExpr {
     name: String,
-    left: Expr,
+    left: LogicalExpr,
     op: BinaryOp,
-    right: Expr,
+    right: LogicalExpr,
 }
 
-impl BinaryExpr {
+impl BinaryLogicalExpr {
     fn to_field(&self, input: &Schema) -> FieldRef {
         let lf = self.left.to_field(input);
         let rf = self.right.to_field(input);
@@ -309,14 +251,19 @@ impl BinaryExpr {
     }
 }
 
-impl std::fmt::Display for BinaryExpr {
+impl std::fmt::Display for BinaryLogicalExpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} {} {}", self.left, self.op, self.right)
     }
 }
 
-fn binary(name: impl Into<String>, left: Expr, op: BinaryOp, right: Expr) -> Expr {
-    Expr::new(ExprKind::Binary(BinaryExpr {
+fn binary(
+    name: impl Into<String>,
+    left: LogicalExpr,
+    op: BinaryOp,
+    right: LogicalExpr,
+) -> LogicalExpr {
+    LogicalExpr::new(LogicalExprKind::Binary(BinaryLogicalExpr {
         name: name.into(),
         left,
         op,
@@ -324,131 +271,131 @@ fn binary(name: impl Into<String>, left: Expr, op: BinaryOp, right: Expr) -> Exp
     }))
 }
 
-pub fn eq(left: Expr, right: Expr) -> Expr {
+pub fn eq(left: LogicalExpr, right: LogicalExpr) -> LogicalExpr {
     binary("eq", left, BinaryOp::Eq, right)
 }
 
-pub fn neq(left: Expr, right: Expr) -> Expr {
+pub fn neq(left: LogicalExpr, right: LogicalExpr) -> LogicalExpr {
     binary("neq", left, BinaryOp::NotEq, right)
 }
 
-pub fn gt(left: Expr, right: Expr) -> Expr {
+pub fn gt(left: LogicalExpr, right: LogicalExpr) -> LogicalExpr {
     binary("gt", left, BinaryOp::Gt, right)
 }
 
-pub fn gteq(left: Expr, right: Expr) -> Expr {
+pub fn gteq(left: LogicalExpr, right: LogicalExpr) -> LogicalExpr {
     binary("gteq", left, BinaryOp::GtEq, right)
 }
 
-pub fn lt(left: Expr, right: Expr) -> Expr {
+pub fn lt(left: LogicalExpr, right: LogicalExpr) -> LogicalExpr {
     binary("lt", left, BinaryOp::Lt, right)
 }
 
-pub fn lteq(left: Expr, right: Expr) -> Expr {
+pub fn lteq(left: LogicalExpr, right: LogicalExpr) -> LogicalExpr {
     binary("lteq", left, BinaryOp::LtEq, right)
 }
 
-pub fn and(left: Expr, right: Expr) -> Expr {
+pub fn and(left: LogicalExpr, right: LogicalExpr) -> LogicalExpr {
     binary("and", left, BinaryOp::And, right)
 }
 
-pub fn or(left: Expr, right: Expr) -> Expr {
+pub fn or(left: LogicalExpr, right: LogicalExpr) -> LogicalExpr {
     binary("or", left, BinaryOp::Or, right)
 }
 
-pub fn add(left: Expr, right: Expr) -> Expr {
+pub fn add(left: LogicalExpr, right: LogicalExpr) -> LogicalExpr {
     binary("add", left, BinaryOp::Add, right)
 }
 
-pub fn subtract(left: Expr, right: Expr) -> Expr {
+pub fn subtract(left: LogicalExpr, right: LogicalExpr) -> LogicalExpr {
     binary("subtract", left, BinaryOp::Subtract, right)
 }
 
-pub fn multiply(left: Expr, right: Expr) -> Expr {
+pub fn multiply(left: LogicalExpr, right: LogicalExpr) -> LogicalExpr {
     binary("multiply", left, BinaryOp::Multiply, right)
 }
 
-pub fn divide(left: Expr, right: Expr) -> Expr {
+pub fn divide(left: LogicalExpr, right: LogicalExpr) -> LogicalExpr {
     binary("divide", left, BinaryOp::Divide, right)
 }
 
-pub fn modulus(left: Expr, right: Expr) -> Expr {
+pub fn modulus(left: LogicalExpr, right: LogicalExpr) -> LogicalExpr {
     binary("modulus", left, BinaryOp::Modulus, right)
 }
 
-impl<Rhs> std::ops::Add<Rhs> for Expr
+impl<Rhs> std::ops::Add<Rhs> for LogicalExpr
 where
-    Rhs: Into<Expr>,
+    Rhs: Into<LogicalExpr>,
 {
-    type Output = Expr;
+    type Output = LogicalExpr;
     fn add(self, rhs: Rhs) -> Self::Output {
         add(self, rhs.into())
     }
 }
 
-impl<Rhs> std::ops::Sub<Rhs> for Expr
+impl<Rhs> std::ops::Sub<Rhs> for LogicalExpr
 where
-    Rhs: Into<Expr>,
+    Rhs: Into<LogicalExpr>,
 {
-    type Output = Expr;
+    type Output = LogicalExpr;
     fn sub(self, rhs: Rhs) -> Self::Output {
         subtract(self, rhs.into())
     }
 }
 
-impl<Rhs> std::ops::Mul<Rhs> for Expr
+impl<Rhs> std::ops::Mul<Rhs> for LogicalExpr
 where
-    Rhs: Into<Expr>,
+    Rhs: Into<LogicalExpr>,
 {
-    type Output = Expr;
+    type Output = LogicalExpr;
     fn mul(self, rhs: Rhs) -> Self::Output {
         multiply(self, rhs.into())
     }
 }
 
-impl<Rhs> std::ops::Div<Rhs> for Expr
+impl<Rhs> std::ops::Div<Rhs> for LogicalExpr
 where
-    Rhs: Into<Expr>,
+    Rhs: Into<LogicalExpr>,
 {
-    type Output = Expr;
+    type Output = LogicalExpr;
     fn div(self, rhs: Rhs) -> Self::Output {
         divide(self, rhs.into())
     }
 }
 
-impl<Rhs> std::ops::Rem<Rhs> for Expr
+impl<Rhs> std::ops::Rem<Rhs> for LogicalExpr
 where
-    Rhs: Into<Expr>,
+    Rhs: Into<LogicalExpr>,
 {
-    type Output = Expr;
+    type Output = LogicalExpr;
     fn rem(self, rhs: Rhs) -> Self::Output {
         modulus(self, rhs.into())
     }
 }
 
 // we can not overload '&&' or '||' in Rust so we use these instead
-impl<Rhs> std::ops::BitAnd<Rhs> for Expr
+impl<Rhs> std::ops::BitAnd<Rhs> for LogicalExpr
 where
-    Rhs: Into<Expr>,
+    Rhs: Into<LogicalExpr>,
 {
-    type Output = Expr;
+    type Output = LogicalExpr;
     fn bitand(self, rhs: Rhs) -> Self::Output {
         and(self, rhs.into())
     }
 }
 
-impl<Rhs> std::ops::BitOr<Rhs> for Expr
+impl<Rhs> std::ops::BitOr<Rhs> for LogicalExpr
 where
-    Rhs: Into<Expr>,
+    Rhs: Into<LogicalExpr>,
 {
-    type Output = Expr;
+    type Output = LogicalExpr;
     fn bitor(self, rhs: Rhs) -> Self::Output {
         or(self, rhs.into())
     }
 }
 
 #[derive(Clone)]
-enum AggregateOp {
+pub enum AggregateOp {
     Min,
     Max,
     Avg,
@@ -470,13 +417,13 @@ impl std::fmt::Display for AggregateOp {
 }
 
 #[derive(Clone)]
-pub struct AggregateExpr {
+pub struct AggregateLogicalExpr {
     name: String,
     op: AggregateOp,
-    expr: Expr,
+    expr: LogicalExpr,
 }
 
-impl AggregateExpr {
+impl AggregateLogicalExpr {
     fn to_field(&self, input: &Schema) -> FieldRef {
         match self.op {
             AggregateOp::Count => Arc::new(Field::new(self.op.to_string(), DataType::Int32, false)),
@@ -492,47 +439,47 @@ impl AggregateExpr {
     }
 }
 
-impl std::fmt::Display for AggregateExpr {
+impl std::fmt::Display for AggregateLogicalExpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}({})", self.op, self.expr)
     }
 }
 
-fn aggregate(name: impl Into<String>, op: AggregateOp, expr: Expr) -> Expr {
-    Expr::new(ExprKind::Aggregate(AggregateExpr {
+fn aggregate(name: impl Into<String>, op: AggregateOp, expr: LogicalExpr) -> LogicalExpr {
+    LogicalExpr::new(LogicalExprKind::Aggregate(AggregateLogicalExpr {
         name: name.into(),
         op,
         expr,
     }))
 }
 
-pub fn min(expr: Expr) -> Expr {
+pub fn min(expr: LogicalExpr) -> LogicalExpr {
     aggregate("min", AggregateOp::Min, expr)
 }
 
-pub fn max(expr: Expr) -> Expr {
+pub fn max(expr: LogicalExpr) -> LogicalExpr {
     aggregate("max", AggregateOp::Max, expr)
 }
 
-pub fn avg(expr: Expr) -> Expr {
+pub fn avg(expr: LogicalExpr) -> LogicalExpr {
     aggregate("avg", AggregateOp::Avg, expr)
 }
 
-pub fn sum(expr: Expr) -> Expr {
+pub fn sum(expr: LogicalExpr) -> LogicalExpr {
     aggregate("sum", AggregateOp::Sum, expr)
 }
 
-pub fn count(expr: Expr) -> Expr {
+pub fn count(expr: LogicalExpr) -> LogicalExpr {
     aggregate("count", AggregateOp::Count, expr)
 }
 
 #[derive(Clone)]
-pub struct AliasExpr {
-    expr: Expr,
+pub struct AliasLogicalExpr {
+    expr: LogicalExpr,
     name: String,
 }
 
-impl AliasExpr {
+impl AliasLogicalExpr {
     fn to_field(&self, input: &Schema) -> FieldRef {
         let f = self.expr.to_field(input);
         Arc::new(Field::new(
@@ -543,14 +490,14 @@ impl AliasExpr {
     }
 }
 
-impl std::fmt::Display for AliasExpr {
+impl std::fmt::Display for AliasLogicalExpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} AS {}", self.expr, self.name)
     }
 }
 
-pub fn alias(expr: Expr, name: impl Into<String>) -> Expr {
-    Expr::new(ExprKind::Alias(AliasExpr {
+pub fn alias(expr: LogicalExpr, name: impl Into<String>) -> LogicalExpr {
+    LogicalExpr::new(LogicalExprKind::Alias(AliasLogicalExpr {
         expr,
         name: name.into(),
     }))

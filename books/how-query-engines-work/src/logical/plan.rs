@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use arrow::datatypes::{Schema, SchemaRef};
 
-use crate::{data_source::SourceId, logical::expr::Expr};
+use crate::{data_source::SourceId, logical::expr::LogicalExpr};
 
 #[derive(Clone)]
 pub enum LogicalPlanKind {
@@ -36,17 +36,17 @@ impl LogicalPlan {
         )))
     }
 
-    pub fn filter(self, predicate: Expr) -> Self {
+    pub fn filter(self, predicate: LogicalExpr) -> Self {
         Self::new(LogicalPlanKind::Filter(FilterPlan::new(self, predicate)))
     }
 
-    pub fn projection(self, exprs: Vec<Expr>) -> Self {
+    pub fn projection(self, exprs: Vec<LogicalExpr>) -> Self {
         Self::new(LogicalPlanKind::Projection(ProjectionPlan::new(
             self, exprs,
         )))
     }
 
-    pub fn aggregate(self, group_exprs: Vec<Expr>, agg_exprs: Vec<Expr>) -> Self {
+    pub fn aggregate(self, group_exprs: Vec<LogicalExpr>, agg_exprs: Vec<LogicalExpr>) -> Self {
         Self::new(LogicalPlanKind::Aggregate(AggregatePlan::new(
             self,
             group_exprs,
@@ -185,12 +185,12 @@ impl std::fmt::Display for ScanPlan {
 #[derive(Clone)]
 pub struct FilterPlan {
     input: LogicalPlan,
-    predicate: Expr,
+    predicate: LogicalExpr,
     schema: SchemaRef,
 }
 
 impl FilterPlan {
-    pub fn new(input: LogicalPlan, predicate: Expr) -> Self {
+    pub fn new(input: LogicalPlan, predicate: LogicalExpr) -> Self {
         let schema = input.schema().clone();
         Self {
             input,
@@ -213,12 +213,12 @@ impl std::fmt::Display for FilterPlan {
 #[derive(Clone)]
 pub struct ProjectionPlan {
     input: LogicalPlan,
-    exprs: Vec<Expr>,
+    exprs: Vec<LogicalExpr>,
     schema: SchemaRef,
 }
 
 impl ProjectionPlan {
-    pub fn new(input: LogicalPlan, exprs: Vec<Expr>) -> Self {
+    pub fn new(input: LogicalPlan, exprs: Vec<LogicalExpr>) -> Self {
         let input_schema = input.schema();
         let schema = Arc::new(Schema::new(
             exprs
@@ -256,13 +256,17 @@ impl std::fmt::Display for ProjectionPlan {
 #[derive(Clone)]
 pub struct AggregatePlan {
     input: LogicalPlan,
-    group_exprs: Vec<Expr>,
-    agg_exprs: Vec<Expr>,
+    group_exprs: Vec<LogicalExpr>,
+    agg_exprs: Vec<LogicalExpr>,
     schema: SchemaRef,
 }
 
 impl AggregatePlan {
-    pub fn new(input: LogicalPlan, group_exprs: Vec<Expr>, agg_exprs: Vec<Expr>) -> Self {
+    pub fn new(
+        input: LogicalPlan,
+        group_exprs: Vec<LogicalExpr>,
+        agg_exprs: Vec<LogicalExpr>,
+    ) -> Self {
         let input_schema = input.schema();
         let schema = Arc::new(Schema::new(
             group_exprs

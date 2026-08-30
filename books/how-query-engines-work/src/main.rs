@@ -5,6 +5,7 @@ pub mod logical;
 pub mod optimizer;
 pub mod physical;
 pub mod scalar;
+pub mod sql;
 
 use crate::context::SessionContext;
 use crate::logical::{

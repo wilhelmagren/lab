@@ -67,6 +67,24 @@ impl ScalarValue {
             Self::Utf8(v) => _make_scalar(StringArray::new_scalar(v.as_str())),
         }
     }
+
+    pub fn to_arrow_array(&self, n_rows: usize) -> ArrayRef {
+        match self {
+            Self::Null => Arc::new(NullArray::new(n_rows)),
+            Self::Boolean(v) => Arc::new(BooleanArray::from(vec![*v; n_rows])),
+            Self::Int8(v) => Arc::new(Int8Array::from(vec![*v; n_rows])),
+            Self::Int16(v) => Arc::new(Int16Array::from(vec![*v; n_rows])),
+            Self::Int32(v) => Arc::new(Int32Array::from(vec![*v; n_rows])),
+            Self::Int64(v) => Arc::new(Int64Array::from(vec![*v; n_rows])),
+            Self::UInt8(v) => Arc::new(UInt8Array::from(vec![*v; n_rows])),
+            Self::UInt16(v) => Arc::new(UInt16Array::from(vec![*v; n_rows])),
+            Self::UInt32(v) => Arc::new(UInt32Array::from(vec![*v; n_rows])),
+            Self::UInt64(v) => Arc::new(UInt64Array::from(vec![*v; n_rows])),
+            Self::Float32(v) => Arc::new(Float32Array::from(vec![*v; n_rows])),
+            Self::Float64(v) => Arc::new(Float64Array::from(vec![*v; n_rows])),
+            Self::Utf8(v) => Arc::new(StringArray::from(vec![v.clone(); n_rows])),
+        }
+    }
 }
 
 impl std::fmt::Display for ScalarValue {
