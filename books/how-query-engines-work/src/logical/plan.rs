@@ -6,7 +6,7 @@ use arrow::datatypes::{Schema, SchemaRef};
 use crate::{data_source::SourceId, logical::expr::Expr};
 
 #[derive(Clone)]
-enum LogicalPlanKind {
+pub enum LogicalPlanKind {
     Limit(LimitPlan),
     Scan(ScanPlan),
     Filter(FilterPlan),
@@ -19,6 +19,45 @@ enum LogicalPlanKind {
 pub struct LogicalPlan(Arc<LogicalPlanKind>);
 
 impl LogicalPlan {
+    pub fn new(plan: LogicalPlanKind) -> Self {
+        Self(Arc::new(plan))
+    }
+
+    pub fn limit(self, limit: usize) -> Self {
+        Self::new(LogicalPlanKind::Limit(LimitPlan::new(self, limit)))
+    }
+
+    pub fn scan(source_id: SourceId, source_name: impl Into<String>, schema: SchemaRef) -> Self {
+        Self::new(LogicalPlanKind::Scan(ScanPlan::new(
+            source_id,
+            source_name.into(),
+            schema,
+            None,
+        )))
+    }
+
+    pub fn filter(self, predicate: Expr) -> Self {
+        Self::new(LogicalPlanKind::Filter(FilterPlan::new(self, predicate)))
+    }
+
+    pub fn projection(self, exprs: Vec<Expr>) -> Self {
+        Self::new(LogicalPlanKind::Projection(ProjectionPlan::new(
+            self, exprs,
+        )))
+    }
+
+    pub fn aggregate(self, group_exprs: Vec<Expr>, agg_exprs: Vec<Expr>) -> Self {
+        Self::new(LogicalPlanKind::Aggregate(AggregatePlan::new(
+            self,
+            group_exprs,
+            agg_exprs,
+        )))
+    }
+
+    pub fn join(self, right: LogicalPlan, how: JoinType, on: Vec<JoinKey>) -> Self {
+        Self::new(LogicalPlanKind::Join(JoinPlan::new(self, right, how, on)))
+    }
+
     fn kind(&self) -> &LogicalPlanKind {
         self.0.as_ref()
     }
@@ -34,34 +73,25 @@ impl LogicalPlan {
         }
     }
 
-    pub fn inputs(&self) -> Vec<LogicalPlan> {
+    pub fn inputs(&self) -> Vec<&LogicalPlan> {
         match self.kind() {
-            LogicalPlanKind::Limit(lp) => vec![lp.input.clone()],
+            LogicalPlanKind::Limit(lp) => vec![&lp.input],
             LogicalPlanKind::Scan(_) => vec![],
-            LogicalPlanKind::Filter(fp) => vec![fp.input.clone()],
-            LogicalPlanKind::Projection(pp) => vec![pp.input.clone()],
-            LogicalPlanKind::Aggregate(ap) => vec![ap.input.clone()],
-            LogicalPlanKind::Join(jp) => vec![jp.left.clone(), jp.right.clone()],
+            LogicalPlanKind::Filter(fp) => vec![&fp.input],
+            LogicalPlanKind::Projection(pp) => vec![&pp.input],
+            LogicalPlanKind::Aggregate(ap) => vec![&ap.input],
+            LogicalPlanKind::Join(jp) => vec![&jp.left, &jp.right],
         }
-    }
-
-    pub fn scan(source_id: SourceId, source_name: impl Into<String>, schema: SchemaRef) -> Self {
-        Self(Arc::new(LogicalPlanKind::Scan(ScanPlan::new(
-            source_id,
-            source_name.into(),
-            schema,
-            None,
-        ))))
     }
 
     pub fn format(&self, indent: usize) -> String {
         let mut s = String::new();
-        (0..indent).for_each(|_| s.push_str("  "));
+        s.push_str(&"  ".repeat(indent));
         s.push_str(self.to_string().as_str());
         s.push_str("\n");
         self.inputs()
             .iter()
-            .for_each(|i| s.push_str(i.to_string().as_str()));
+            .for_each(|i| s.push_str(i.format(indent + 1).as_str()));
         s
     }
 }
@@ -80,7 +110,7 @@ impl std::fmt::Display for LogicalPlan {
 }
 
 #[derive(Clone)]
-struct LimitPlan {
+pub struct LimitPlan {
     input: LogicalPlan,
     limit: usize,
     schema: SchemaRef,
@@ -108,7 +138,7 @@ impl std::fmt::Display for LimitPlan {
 }
 
 #[derive(Clone)]
-struct ScanPlan {
+pub struct ScanPlan {
     source_id: SourceId,
     source_name: String,
     schema: SchemaRef,
@@ -153,7 +183,7 @@ impl std::fmt::Display for ScanPlan {
 }
 
 #[derive(Clone)]
-struct FilterPlan {
+pub struct FilterPlan {
     input: LogicalPlan,
     predicate: Expr,
     schema: SchemaRef,
@@ -181,7 +211,7 @@ impl std::fmt::Display for FilterPlan {
 }
 
 #[derive(Clone)]
-struct ProjectionPlan {
+pub struct ProjectionPlan {
     input: LogicalPlan,
     exprs: Vec<Expr>,
     schema: SchemaRef,
@@ -224,7 +254,7 @@ impl std::fmt::Display for ProjectionPlan {
 }
 
 #[derive(Clone)]
-struct AggregatePlan {
+pub struct AggregatePlan {
     input: LogicalPlan,
     group_exprs: Vec<Expr>,
     agg_exprs: Vec<Expr>,
@@ -314,7 +344,7 @@ impl std::fmt::Display for JoinKey {
 }
 
 #[derive(Clone)]
-struct JoinPlan {
+pub struct JoinPlan {
     left: LogicalPlan,
     right: LogicalPlan,
     how: JoinType,

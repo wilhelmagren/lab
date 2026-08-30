@@ -91,6 +91,42 @@ impl Expr {
             ExprKind::Alias(expr) => expr.to_field(input),
         }
     }
+
+    pub fn alias(self, name: impl Into<String>) -> Self {
+        alias(self, name)
+    }
+
+    pub fn eq(self, rhs: impl Into<Expr>) -> Self {
+        eq(self, rhs.into())
+    }
+
+    pub fn neq(self, rhs: impl Into<Expr>) -> Self {
+        neq(self, rhs.into())
+    }
+
+    pub fn gt(self, rhs: impl Into<Expr>) -> Self {
+        gt(self, rhs.into())
+    }
+
+    pub fn gteq(self, rhs: impl Into<Expr>) -> Self {
+        gteq(self, rhs.into())
+    }
+
+    pub fn lt(self, rhs: impl Into<Expr>) -> Self {
+        lt(self, rhs.into())
+    }
+
+    pub fn lteq(self, rhs: impl Into<Expr>) -> Self {
+        lteq(self, rhs.into())
+    }
+
+    pub fn and(self, rhs: impl Into<Expr>) -> Self {
+        and(self, rhs.into())
+    }
+
+    pub fn or(self, rhs: impl Into<Expr>) -> Self {
+        or(self, rhs.into())
+    }
 }
 
 #[derive(Clone)]
@@ -126,7 +162,7 @@ impl ColumnExpr {
 
 impl std::fmt::Display for ColumnExpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.name)
+        write!(f, "#{}", self.name)
     }
 }
 
