@@ -405,7 +405,7 @@ impl std::fmt::Display for JoinPlan {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Join: type={}, on={}",
+            "Join: type={}, on=[{}]",
             self.how,
             self.on
                 .iter()

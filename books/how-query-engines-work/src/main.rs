@@ -6,22 +6,37 @@ pub mod optimizer;
 pub mod physical;
 pub mod scalar;
 
-use context::SessionContext;
-
-use crate::logical::expr::col;
+use crate::context::SessionContext;
+use crate::logical::{
+    expr::col,
+    plan::{JoinKey, JoinType},
+};
 
 fn main() {
-    SessionContext::new()
-        .parquet("data/titanic.parquet")
-        .filter(col("Age").gteq(18) & col("Sex").eq("female") & col("Fare").gt(20.0))
-        .project(vec![
-            col("Name"),
-            col("Age"),
-            col("Pclass"),
-            col("Fare"),
-            (col("Fare") / col("Pclass")).alias("fare_per_class"),
-        ])
-        .filter(col("fare_per_class").gt(15.0))
-        .limit(10)
-        .print_plan();
+    // Find passengers on the same ticket where one survived and one did not.
+    let ctx = SessionContext::new();
+
+    let passengers = ctx.parquet("data/titanic.parquet");
+
+    let survivors = passengers.filter(col("Survived").eq(1)).project(vec![
+        col("Ticket"),
+        col("Name").alias("survivor_name"),
+        col("Ticket").alias("survivor_ticket"),
+    ]);
+
+    let non_survivors = passengers.filter(col("Survived").eq(0)).project(vec![
+        col("Ticket"),
+        col("Name").alias("non_survivor_name"),
+        col("Ticket").alias("non_survivor_ticket"),
+    ]);
+
+    let df = survivors
+        .join(
+            &non_survivors,
+            JoinType::Inner,
+            vec![JoinKey::new("Ticket", "Ticket")],
+        )
+        .limit(23);
+
+    df.print_plan();
 }

@@ -44,7 +44,7 @@ impl DataFrame {
         self.with_plan(self.plan.clone().aggregate(group_by, agg_exprs))
     }
 
-    pub fn join(&self, right: DataFrame, how: JoinType, on: Vec<JoinKey>) -> Self {
+    pub fn join(&self, right: &DataFrame, how: JoinType, on: Vec<JoinKey>) -> Self {
         self.with_plan(self.plan.clone().join(right.get_plan().clone(), how, on))
     }
 
