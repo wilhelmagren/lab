@@ -39,3 +39,21 @@ This is what I build from reading the "How Query Engines Work" book by Andy Grov
                        ▼
               Arrow RecordBatch
 ```
+
+```rust
+use crate::context::SessionContext;
+use crate::logical::expr::{col, lit};
+
+fn main() {
+    let df= SessionContext::new()
+        .parquet("data/titanic.parquet")
+        .select(vec![col("Name"), col("Ticket"), col("Survived")])
+        .filter(col("Survived").eq(lit(1 as i64)))
+        .select(vec![col("Name"), col("Ticket")])
+        .limit(5);
+
+    for batch in ctx.execute(&df) {
+        println!("{:?}", batch);
+    }
+}
+```
