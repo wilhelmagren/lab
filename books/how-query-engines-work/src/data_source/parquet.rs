@@ -37,7 +37,7 @@ impl DataSource for ParquetDataSource {
         &self.schema
     }
 
-    fn scan(&self, projection: Option<&[usize]>) -> RecordBatchIterator<'_> {
+    fn scan(&self, projection: Option<&[usize]>) -> RecordBatchIterator {
         let mut builder =
             ParquetRecordBatchReaderBuilder::try_new(fs::File::open(&self.filename).unwrap())
                 .unwrap();
@@ -45,7 +45,7 @@ impl DataSource for ParquetDataSource {
         if let Some(projection) = projection {
             builder = builder.with_projection(ProjectionMask::roots(
                 &self.parquet_schema,
-                projection.iter().copied(),
+                projection.to_vec(),
             ));
         }
 

@@ -58,7 +58,7 @@ impl LogicalPlan {
         Self::new(LogicalPlanKind::Join(JoinPlan::new(self, right, how, on)))
     }
 
-    fn kind(&self) -> &LogicalPlanKind {
+    pub fn kind(&self) -> &LogicalPlanKind {
         self.0.as_ref()
     }
 
@@ -126,6 +126,14 @@ impl LimitPlan {
         }
     }
 
+    pub fn input(&self) -> &LogicalPlan {
+        &self.input
+    }
+
+    pub fn limit(&self) -> usize {
+        self.limit
+    }
+
     fn schema(&self) -> &SchemaRef {
         &self.schema
     }
@@ -134,6 +142,12 @@ impl LimitPlan {
 impl std::fmt::Display for LimitPlan {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Limit: {}", self.limit)
+    }
+}
+
+impl From<LimitPlan> for LogicalPlan {
+    fn from(value: LimitPlan) -> Self {
+        Self(Arc::new(LogicalPlanKind::Limit(value)))
     }
 }
 
@@ -185,8 +199,8 @@ impl std::fmt::Display for ScanPlan {
 #[derive(Clone)]
 pub struct FilterPlan {
     input: LogicalPlan,
-    predicate: LogicalExpr,
     schema: SchemaRef,
+    predicate: LogicalExpr,
 }
 
 impl FilterPlan {
@@ -202,11 +216,25 @@ impl FilterPlan {
     fn schema(&self) -> &SchemaRef {
         &self.schema
     }
+
+    pub fn predicate(&self) -> &LogicalExpr {
+        &self.predicate
+    }
+
+    pub fn input(&self) -> &LogicalPlan {
+        &self.input
+    }
 }
 
 impl std::fmt::Display for FilterPlan {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Filter: {}", self.predicate)
+    }
+}
+
+impl From<FilterPlan> for LogicalPlan {
+    fn from(value: FilterPlan) -> Self {
+        Self(Arc::new(LogicalPlanKind::Filter(value)))
     }
 }
 
@@ -219,11 +247,10 @@ pub struct ProjectionPlan {
 
 impl ProjectionPlan {
     pub fn new(input: LogicalPlan, exprs: Vec<LogicalExpr>) -> Self {
-        let input_schema = input.schema();
         let schema = Arc::new(Schema::new(
             exprs
                 .iter()
-                .map(|expr| expr.to_field(input_schema))
+                .map(|expr| expr.to_field(&input.schema()))
                 .collect::<Vec<_>>(),
         ));
 
@@ -236,6 +263,14 @@ impl ProjectionPlan {
 
     fn schema(&self) -> &SchemaRef {
         &self.schema
+    }
+
+    pub fn exprs(&self) -> &[LogicalExpr] {
+        &self.exprs
+    }
+
+    pub fn input(&self) -> &LogicalPlan {
+        &self.input
     }
 }
 
@@ -286,6 +321,10 @@ impl AggregatePlan {
 
     fn schema(&self) -> &SchemaRef {
         &self.schema
+    }
+
+    pub fn input(&self) -> &LogicalPlan {
+        &self.input
     }
 }
 

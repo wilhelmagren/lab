@@ -1,10 +1,8 @@
 use std::sync::Arc;
 
 use crate::data_source::registry::SourceRegistry;
-use crate::logical::{
-    expr::LogicalExpr,
-    plan::{JoinKey, JoinType, LogicalPlan},
-};
+use crate::logical::expr::LogicalExpr;
+use crate::logical::plan::{JoinKey, JoinType, LogicalPlan};
 
 pub struct DataFrame {
     plan: LogicalPlan,
@@ -45,14 +43,14 @@ impl DataFrame {
     }
 
     pub fn join(&self, right: &DataFrame, how: JoinType, on: Vec<JoinKey>) -> Self {
-        self.with_plan(self.plan.clone().join(right.get_plan().clone(), how, on))
+        self.with_plan(
+            self.plan
+                .clone()
+                .join(right.logical_plan().clone(), how, on),
+        )
     }
 
-    pub fn get_plan(&self) -> &LogicalPlan {
+    pub fn logical_plan(&self) -> &LogicalPlan {
         &self.plan
-    }
-
-    pub fn print_plan(&self) {
-        println!("{}", self.plan.format(0));
     }
 }

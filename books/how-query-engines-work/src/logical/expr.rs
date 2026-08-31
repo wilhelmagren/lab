@@ -98,6 +98,10 @@ impl ColumnLogicalExpr {
             .1
             .clone()
     }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
 }
 
 impl std::fmt::Display for ColumnLogicalExpr {
@@ -119,6 +123,10 @@ pub struct LiteralLogicalExpr {
 }
 
 impl LiteralLogicalExpr {
+    pub fn value(&self) -> &ScalarValue {
+        &self.value
+    }
+
     fn to_field(&self) -> FieldRef {
         Arc::new(Field::new(
             self.value.to_string(),
@@ -189,7 +197,7 @@ pub enum BinaryOp {
 }
 
 impl BinaryOp {
-    fn result_data_type(&self, left: &DataType, _right: &DataType) -> DataType {
+    pub fn result_data_type(&self, left: &DataType, _right: &DataType) -> DataType {
         match self {
             Self::Eq
             | Self::NotEq
@@ -248,6 +256,22 @@ impl BinaryLogicalExpr {
             self.op.result_data_type(lf.data_type(), rf.data_type()),
             lf.is_nullable() || rf.is_nullable(),
         ))
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn left(&self) -> &LogicalExpr {
+        &self.left
+    }
+
+    pub fn op(&self) -> &BinaryOp {
+        &self.op
+    }
+
+    pub fn right(&self) -> &LogicalExpr {
+        &self.right
     }
 }
 
@@ -487,6 +511,10 @@ impl AliasLogicalExpr {
             f.data_type().clone(),
             f.is_nullable(),
         ))
+    }
+
+    pub fn expr(&self) -> &LogicalExpr {
+        &self.expr
     }
 }
 

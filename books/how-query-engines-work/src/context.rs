@@ -1,9 +1,12 @@
 use std::sync::Arc;
 
 use crate::{
-    data_source::{DataSource, parquet::ParquetDataSource, registry::SourceRegistry},
+    data_source::{
+        DataSource, RecordBatchIterator, parquet::ParquetDataSource, registry::SourceRegistry,
+    },
     dataframe::DataFrame,
     logical::plan::LogicalPlan,
+    planner::Planner,
 };
 
 #[derive(Clone)]
@@ -29,5 +32,16 @@ impl SessionContext {
         let plan = LogicalPlan::scan(source_id, name, schema);
 
         DataFrame::new(plan, self.sources.clone())
+    }
+
+    pub fn execute(&self, df: &DataFrame) -> RecordBatchIterator {
+        let logical_plan = df.logical_plan();
+        println!("Logical Plan:\n{}", logical_plan.format(1));
+
+        let physical_plan =
+            Planner::new(self.sources.clone()).create_physical_plan(logical_plan.clone());
+        println!("Physical Plan:\n{}", physical_plan.format(1));
+
+        physical_plan.execute()
     }
 }

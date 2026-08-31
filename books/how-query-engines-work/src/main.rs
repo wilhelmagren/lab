@@ -4,10 +4,12 @@ pub mod dataframe;
 pub mod logical;
 pub mod optimizer;
 pub mod physical;
+pub mod planner;
 pub mod scalar;
 pub mod sql;
 
 use crate::context::SessionContext;
+use crate::logical::expr::{lit, sum};
 use crate::logical::{
     expr::col,
     plan::{JoinKey, JoinType},
@@ -19,6 +21,7 @@ fn main() {
 
     let passengers = ctx.parquet("data/titanic.parquet");
 
+    /*
     let survivors = passengers.filter(col("Survived").eq(1)).project(vec![
         col("Ticket"),
         col("Name").alias("survivor_name"),
@@ -38,6 +41,15 @@ fn main() {
             vec![JoinKey::new("Ticket", "Ticket")],
         )
         .limit(23);
+    */
 
-    df.print_plan();
+    let df = passengers
+        .select(vec![col("Name"), col("Ticket"), col("Survived")])
+        .filter(col("Survived").eq(lit(1 as i64)))
+        .select(vec![col("Name"), col("Ticket")])
+        .limit(5);
+
+    for batch in ctx.execute(&df) {
+        println!("{:?}", batch);
+    }
 }
