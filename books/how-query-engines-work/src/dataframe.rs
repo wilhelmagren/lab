@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::data_source::registry::SourceRegistry;
 use crate::logical::{
-    expr::Expr,
+    expr::LogicalExpr,
     plan::{JoinKey, JoinType, LogicalPlan},
 };
 
@@ -27,20 +27,20 @@ impl DataFrame {
         self.with_plan(self.plan.clone().limit(limit))
     }
 
-    pub fn filter(&self, predicate: Expr) -> Self {
+    pub fn filter(&self, predicate: LogicalExpr) -> Self {
         self.with_plan(self.plan.clone().filter(predicate))
     }
 
-    pub fn project(&self, exprs: Vec<Expr>) -> Self {
+    pub fn project(&self, exprs: Vec<LogicalExpr>) -> Self {
         self.with_plan(self.plan.clone().projection(exprs))
     }
 
     /// Alias for [`project`].
-    pub fn select(&self, exprs: Vec<Expr>) -> Self {
+    pub fn select(&self, exprs: Vec<LogicalExpr>) -> Self {
         self.with_plan(self.plan.clone().projection(exprs))
     }
 
-    pub fn agg(&self, group_by: Vec<Expr>, agg_exprs: Vec<Expr>) -> Self {
+    pub fn agg(&self, group_by: Vec<LogicalExpr>, agg_exprs: Vec<LogicalExpr>) -> Self {
         self.with_plan(self.plan.clone().aggregate(group_by, agg_exprs))
     }
 
