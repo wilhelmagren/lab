@@ -36,11 +36,11 @@ impl SessionContext {
 
     pub fn execute(&self, df: &DataFrame) -> RecordBatchIterator {
         let logical_plan = df.logical_plan();
-        println!("Logical Plan:\n{}", logical_plan.format(1));
+        println!("== Logical Plan ==\n{}", logical_plan.format(0));
 
         let physical_plan =
             Planner::new(self.sources.clone()).create_physical_plan(logical_plan.clone());
-        println!("Physical Plan:\n{}", physical_plan.format(1));
+        println!("== Physical Plan ==\n{}", physical_plan.format(0));
 
         physical_plan.execute()
     }

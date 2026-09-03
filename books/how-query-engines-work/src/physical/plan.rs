@@ -70,7 +70,10 @@ impl PhysicalPlan {
 
     pub fn format(&self, indent: usize) -> String {
         let mut s = String::new();
-        s.push_str(&"  ".repeat(indent));
+        if indent > 0 {
+            s.push_str(&"   ".repeat(indent - 1));
+            s.push_str("+- ");
+        }
         s.push_str(self.to_string().as_str());
         s.push_str("\n");
         self.inputs()

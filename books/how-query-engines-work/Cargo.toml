@@ -4,6 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-arrow = "59.2.0"
+arrow = { version = "59.2.0", features = ["prettyprint"] }
 arrow-arith = "59.2.0"
 parquet = "59.2.0"

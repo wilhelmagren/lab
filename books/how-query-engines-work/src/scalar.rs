@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
 use arrow::array::{
-    Array, ArrayRef, BooleanArray, Float32Array, Float64Array, Int8Array, Int16Array, Int32Array,
-    Int64Array, NullArray, Scalar, StringArray, UInt8Array, UInt16Array, UInt32Array, UInt64Array,
+    Array, ArrayRef, BooleanArray, Float32Array, Float64Array, Int8Array, Int16Array, Int32Array, Int64Array, LargeStringArray, NullArray, Scalar, StringArray, UInt8Array, UInt16Array, UInt32Array, UInt64Array
 };
 use arrow::datatypes::DataType;
 
@@ -46,7 +45,7 @@ impl ScalarValue {
             Self::UInt64(_) => DataType::UInt64,
             Self::Float32(_) => DataType::Float32,
             Self::Float64(_) => DataType::Float64,
-            Self::Utf8(_) => DataType::Utf8,
+            Self::Utf8(_) => DataType::LargeUtf8,
         }
     }
 
@@ -64,7 +63,7 @@ impl ScalarValue {
             Self::UInt64(v) => _make_scalar(UInt64Array::new_scalar(*v)),
             Self::Float32(v) => _make_scalar(Float32Array::new_scalar(*v)),
             Self::Float64(v) => _make_scalar(Float64Array::new_scalar(*v)),
-            Self::Utf8(v) => _make_scalar(StringArray::new_scalar(v.as_str())),
+            Self::Utf8(v) => _make_scalar(LargeStringArray::new_scalar(v.as_str())),
         }
     }
 
@@ -82,7 +81,7 @@ impl ScalarValue {
             Self::UInt64(v) => Arc::new(UInt64Array::from(vec![*v; n_rows])),
             Self::Float32(v) => Arc::new(Float32Array::from(vec![*v; n_rows])),
             Self::Float64(v) => Arc::new(Float64Array::from(vec![*v; n_rows])),
-            Self::Utf8(v) => Arc::new(StringArray::from(vec![v.clone(); n_rows])),
+            Self::Utf8(v) => Arc::new(LargeStringArray::from(vec![v.clone(); n_rows])),
         }
     }
 }

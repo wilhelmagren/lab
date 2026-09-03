@@ -6,6 +6,29 @@ use std::process;
 
 static mut HAD_ERROR: bool = false;
 
+// GRAMMAR
+
+/*
+expression     → literal
+               | unary
+               | binary
+               | grouping ;
+
+literal        → NUMBER | STRING | "true" | "false" | "nil" ;
+grouping       → "(" expression ")" ;
+unary          → ( "-" | "!" ) expression ;
+binary         → expression operator expression ;
+operator       → "==" | "!=" | "<" | "<=" | ">" | ">="
+               | "+"  | "-"  | "*" | "/" ;
+*/
+
+enum Expr {
+    Binary,
+    Unary,
+    Grouping,
+    Literal,
+}
+
 // Lexemes and Tokens
 //
 // Lexical analysis, scan through list of characters and group them together
