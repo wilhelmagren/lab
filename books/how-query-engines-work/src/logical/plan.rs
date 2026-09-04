@@ -88,8 +88,8 @@ impl LogicalPlan {
         let mut s = String::new();
 
         if indent > 0 {
-            s.push_str(&"  ".repeat(indent - 1));
-            s.push_str("+-");
+            s.push_str(&"   ".repeat(indent - 1));
+            s.push_str("+- ");
         }
 
         s.push_str(self.to_string().as_str());
@@ -296,8 +296,8 @@ impl std::fmt::Display for ProjectionPlan {
 #[derive(Clone)]
 pub struct AggregatePlan {
     input: LogicalPlan,
-    group_exprs: Vec<LogicalExpr>,
-    agg_exprs: Vec<LogicalExpr>,
+    pub group_exprs: Vec<LogicalExpr>,
+    pub agg_exprs: Vec<LogicalExpr>,
     schema: SchemaRef,
 }
 

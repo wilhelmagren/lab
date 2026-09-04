@@ -9,8 +9,8 @@ use crate::{
     physical::{
         expr::{PhysicalBinaryExpr, PhysicalColumnExpr, PhysicalExpr, PhysicalLiteralExpr},
         plan::{
-            PhysicalFilterPlan, PhysicalLimitPlan, PhysicalPlan, PhysicalProjectionPlan,
-            PhysicalScanPlan,
+            PhysicalAggregatePlan, PhysicalFilterPlan, PhysicalLimitPlan, PhysicalPlan,
+            PhysicalProjectionPlan, PhysicalScanPlan,
         },
     },
 };
@@ -50,6 +50,18 @@ impl Planner {
                     .collect::<Vec<PhysicalExpr>>(),
             )
             .into(),
+            LogicalPlanKind::Aggregate(plan) => PhysicalAggregatePlan::new(
+                self.create_physical_plan(plan.input().clone()),
+                plan.group_exprs
+                    .iter()
+                    .map(|e| self.create_physical_expr(plan.input().clone(), e.clone()))
+                    .collect::<Vec<PhysicalExpr>>(),
+                plan.agg_exprs
+                    .iter()
+                    .map(|e| self.create_physical_expr(plan.input().clone(), e.clone()))
+                    .collect::<Vec<PhysicalExpr>>(),
+            )
+            .into(),
             _ => todo!(),
         }
     }
@@ -75,7 +87,7 @@ impl Planner {
             // alias only affects naming during planning, as it gives a name to an expr
             // just evaluate the underlying expr, it has no specific physical repr
             LogicalExprKind::Alias(expr) => self.create_physical_expr(input, expr.expr().clone()),
-            _ => todo!(),
+            LogicalExprKind::Aggregate(expr) => self.create_physical_expr(input, expr.expr.clone()),
         }
     }
 }

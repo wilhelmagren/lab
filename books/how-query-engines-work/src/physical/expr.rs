@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use arrow::array::{ArrayRef, BooleanArray, Datum, RecordBatch, Scalar, downcast_array};
+use arrow::array::{ArrayRef, BooleanArray, Datum, PrimitiveArray, RecordBatch, Scalar, downcast_array};
 use arrow::compute::kernels::boolean::{and, or};
 use arrow::compute::kernels::cmp::{eq, gt, gt_eq, lt, lt_eq, neq};
 use arrow::compute::kernels::numeric::{add, div, mul, rem, sub};
@@ -55,7 +55,7 @@ impl std::fmt::Display for PhysicalExpr {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum ColumnarValue {
     Array(ArrayRef),
     Scalar(Scalar<ArrayRef>),
@@ -184,43 +184,37 @@ impl PhysicalBinaryExpr {
     // can a binary expression return a scalar value? dont think so
     fn evaluate(&self, input: &RecordBatch) -> ColumnarValue {
         let lc = self.left.evaluate(input);
-        let larr = lc.as_datum();
-
         let rc = self.right.evaluate(input);
-        let rarr = rc.as_datum();
 
         let arr = match self.op {
-            BinaryOp::Add => add(larr, rarr).unwrap(),
-            BinaryOp::Subtract => sub(larr, rarr).unwrap(),
-            BinaryOp::Multiply => mul(larr, rarr).unwrap(),
-            BinaryOp::Divide => div(larr, rarr).unwrap(),
-            BinaryOp::Modulus => rem(larr, rarr).unwrap(),
-            BinaryOp::Eq => Arc::new(eq(larr, rarr).unwrap()),
-            BinaryOp::NotEq => Arc::new(neq(larr, rarr).unwrap()),
-            BinaryOp::Gt => Arc::new(gt(larr, rarr).unwrap()),
-            BinaryOp::GtEq => Arc::new(gt_eq(larr, rarr).unwrap()),
-            BinaryOp::Lt => Arc::new(lt(larr, rarr).unwrap()),
-            BinaryOp::LtEq => Arc::new(lt_eq(larr, rarr).unwrap()),
+            BinaryOp::Add => add(lc.as_datum(), rc.as_datum()).unwrap(),
+            BinaryOp::Subtract => sub(lc.as_datum(), rc.as_datum()).unwrap(),
+            BinaryOp::Multiply => mul(lc.as_datum(), rc.as_datum()).unwrap(),
+            BinaryOp::Divide => div(lc.as_datum(), rc.as_datum()).unwrap(),
+            BinaryOp::Modulus => rem(lc.as_datum(), rc.as_datum()).unwrap(),
+            BinaryOp::Eq => Arc::new(eq(lc.as_datum(), rc.as_datum()).unwrap()),
+            BinaryOp::NotEq => Arc::new(neq(lc.as_datum(), rc.as_datum()).unwrap()),
+            BinaryOp::Gt => Arc::new(gt(lc.as_datum(), rc.as_datum()).unwrap()),
+            BinaryOp::GtEq => Arc::new(gt_eq(lc.as_datum(), rc.as_datum()).unwrap()),
+            BinaryOp::Lt => Arc::new(lt(lc.as_datum(), rc.as_datum()).unwrap()),
+            BinaryOp::LtEq => Arc::new(lt_eq(lc.as_datum(), rc.as_datum()).unwrap()),
             // how do we handle this!!! downcast_ref ? maybe ;)
             // YES WE DO!
-            /*
             // SAFETY: PANICS IF LEFT and RIGHT IS NOT BOOLEAN ARRAY!
             BinaryOp::And => Arc::new(
                 and(
-                    &downcast_array::<BooleanArray>(larr),
-                    &downcast_array::<BooleanArray>(rarr),
+                    &downcast_array::<BooleanArray>(&lc.to_arrow_array()),
+                    &downcast_array::<BooleanArray>(&rc.to_arrow_array()),
                 )
                 .unwrap(),
             ),
             BinaryOp::Or => Arc::new(
                 or(
-                    &downcast_array::<BooleanArray>(larr),
-                    &downcast_array::<BooleanArray>(rarr),
+                    &downcast_array::<BooleanArray>(&lc.to_arrow_array()),
+                    &downcast_array::<BooleanArray>(&rc.to_arrow_array()),
                 )
                 .unwrap(),
             ),
-            */
-            _ => todo!(),
         };
 
         ColumnarValue::Array(arr)

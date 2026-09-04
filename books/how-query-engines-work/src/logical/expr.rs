@@ -444,7 +444,7 @@ impl std::fmt::Display for AggregateOp {
 pub struct AggregateLogicalExpr {
     name: String,
     op: AggregateOp,
-    expr: LogicalExpr,
+    pub expr: LogicalExpr,
 }
 
 impl AggregateLogicalExpr {

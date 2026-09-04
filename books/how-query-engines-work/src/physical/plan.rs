@@ -1,14 +1,19 @@
-use std::sync::Arc;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use arrow::{
-    array::{BooleanArray, RecordBatch, downcast_array},
-    compute::filter_record_batch,
-    datatypes::{FieldRef, Schema, SchemaRef},
+    array::{ArrayRef, AsArray, BooleanArray, Int8Array, RecordBatch, downcast_array},
+    compute::{filter_record_batch, min},
+    datatypes::{DataType, FieldRef, Int8Type, Schema, SchemaRef},
+    row::{RowConverter, SortField},
 };
 
 use crate::{
     data_source::{DataSourceRef, RecordBatchIterator},
-    physical::expr::PhysicalExpr,
+    physical::expr::{ColumnarValue, PhysicalExpr},
+    scalar::ScalarValue,
 };
 
 #[derive(Clone)]
@@ -17,6 +22,7 @@ pub enum PhysicalPlanKind {
     Scan(PhysicalScanPlan),
     Filter(PhysicalFilterPlan),
     Projection(PhysicalProjectionPlan),
+    Aggregate(PhysicalAggregatePlan),
 }
 
 #[derive(Clone)]
@@ -47,6 +53,7 @@ impl PhysicalPlan {
             PhysicalPlanKind::Scan(plan) => plan.schema(),
             PhysicalPlanKind::Filter(plan) => plan.schema(),
             PhysicalPlanKind::Projection(plan) => plan.schema(),
+            PhysicalPlanKind::Aggregate(plan) => plan.schema(),
         }
     }
 
@@ -56,6 +63,7 @@ impl PhysicalPlan {
             PhysicalPlanKind::Scan(_) => vec![],
             PhysicalPlanKind::Filter(plan) => vec![plan.input()],
             PhysicalPlanKind::Projection(plan) => vec![plan.input()],
+            PhysicalPlanKind::Aggregate(plan) => vec![plan.input()],
         }
     }
 
@@ -65,6 +73,7 @@ impl PhysicalPlan {
             PhysicalPlanKind::Scan(plan) => plan.execute(),
             PhysicalPlanKind::Filter(plan) => plan.execute(),
             PhysicalPlanKind::Projection(plan) => plan.execute(),
+            PhysicalPlanKind::Aggregate(plan) => plan.execute(),
         }
     }
 
@@ -90,6 +99,7 @@ impl std::fmt::Display for PhysicalPlan {
             PhysicalPlanKind::Scan(plan) => plan.fmt(f),
             PhysicalPlanKind::Filter(plan) => plan.fmt(f),
             PhysicalPlanKind::Projection(plan) => plan.fmt(f),
+            PhysicalPlanKind::Aggregate(plan) => plan.fmt(f),
         }
     }
 }
@@ -399,5 +409,194 @@ impl From<PhysicalFilterPlan> for PhysicalPlan {
 impl std::fmt::Display for PhysicalFilterPlan {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "FilterExec: predicate={}", self.predicate)
+    }
+}
+
+#[derive(Clone)]
+pub enum AccumulatorKind {
+    Min(MinAccumulator),
+}
+
+#[derive(Clone)]
+pub struct MinAccumulator {
+    value: ScalarValue,
+}
+
+impl MinAccumulator {
+    pub fn accumulate(&mut self, values: &ColumnarValue) {
+        let xd = values.clone().to_arrow_array();
+        let prim = match xd.data_type() {
+            DataType::Int8 => xd.as_primitive::<Int8Type>(),
+            _ => todo!(),
+        };
+
+        match self.value {
+            ScalarValue::Null => {
+                self.value = min(prim).into();
+                return;
+            }
+            _ => {
+                let xd = min(prim).into();
+                if xd < self.value {
+                    self.value = xd;
+                }
+                return;
+            }
+        }
+    }
+
+    pub fn final_value(&self) -> &ScalarValue {
+        &self.value
+    }
+
+    /// Merge other intermediate values into this accumulator.
+    pub fn merge(&mut self, other: &ColumnarValue) {
+        self.accumulate(other);
+    }
+}
+
+#[derive(Clone)]
+pub struct PhysicalAggregatePlan {
+    input: PhysicalPlan,
+    schema: SchemaRef,
+    group_exprs: Vec<PhysicalExpr>,
+    agg_exprs: Vec<PhysicalExpr>,
+}
+
+impl PhysicalAggregatePlan {
+    pub fn new(
+        input: PhysicalPlan,
+        group_exprs: Vec<PhysicalExpr>,
+        agg_exprs: Vec<PhysicalExpr>,
+    ) -> Self {
+        let input_schema = input.schema().clone();
+        let schema = Arc::new(Schema::new(
+            group_exprs
+                .iter()
+                .map(|expr| expr.to_field(&input_schema))
+                .chain(agg_exprs.iter().map(|expr| expr.to_field(&input_schema)))
+                .collect::<Vec<_>>(),
+        ));
+
+        Self {
+            input,
+            schema,
+            group_exprs,
+            agg_exprs,
+        }
+    }
+
+    /// Assume we have two batches like
+    ///   name, runes
+    /// [
+    ///   ["wilhelm", 1234],
+    ///   ["elin", 124910],
+    ///   ["elin", -4198],
+    ///   ["wilhelm", 14],
+    ///   ["leffe", 1337],
+    /// ]
+    ///
+    /// and
+    ///
+    /// [
+    ///   ["wilhelm", -2],
+    ///   ["leffe", 49819],
+    /// ]
+    ///
+    /// SELECT name, min(runes) FROM batch
+    /// GROUP BY name
+    ///
+    /// What we want to achieve after first batch is:
+    ///  { "wilhelm": Acc(14), "elin": Acc(-4198), "leffe": Acc(1337) }
+    ///
+    /// and after second
+    ///  { "wilhelm": Acc(-2), "elin": Acc(-4198), "leffe": Acc(1337) }
+    ///
+    /// How do we get here? we need to hash on all evaluated groupBy expressions
+    /// when I do expr.evalute(batch) i get column array of ["wilhelm", "elin", "elin", "wilhelm", "leffe"]
+    /// we want to get the unique keys, for each unique value in that column we want to construct an accumulator
+    /// and give the agg_expr.evalute(batch) result to the accumulator,
+    /// if we have N groupBy cols, and M aggExpressions, we have to for each groupBy col and for each aggExpression
+    /// accumulate(agg_expr.evaluate(batch))
+    ///
+    pub fn execute(&self) -> RecordBatchIterator {
+        let batches = self.input.execute();
+
+        // this is a wide transformation, meaning, we need to materialize
+        // the full input before we can continue from this operation
+
+        // we need to hash by the group_exprs, and for that we need to... evaluate the exprs?..
+        // and tranpose to row format
+
+        let sort_fields = self
+            .group_exprs
+            .iter()
+            .map(|e| SortField::new(e.to_field(self.input.schema()).data_type().clone()))
+            .collect();
+        let mut row_converter = RowConverter::new(sort_fields).unwrap();
+
+        let mut hashagg: HashMap<String, Vec<MinAccumulator>> = HashMap::new();
+        for batch in batches {
+            // for simplicity, assume we only have one groupBy col
+            // this gives us [["a","b","a","c","b"]], a columnar array with ALL group keys
+            let all_group_keys = self
+                .group_exprs
+                .iter()
+                .map(|e| e.evaluate(&batch).to_arrow_array())
+                .collect::<Vec<ArrayRef>>();
+            let rows = row_converter.convert_columns(&all_group_keys).unwrap();
+
+
+            // for each group expression, for each group key, for each agg expr
+
+            for group_keys in all_group_keys {
+                // i give up
+            }
+
+            for gk in group_keys {
+                if let Some(accs) = hashagg.get(&format!("{:?}", gk.unwrap())) {
+                    for expr in self.agg_exprs {
+                        for acc in accs.iter_mut() {
+                            acc.accumulate(&expr.evaluate(&batch))
+                        }
+                    }
+                }
+            }
+        }
+
+        todo!()
+    }
+
+    fn schema(&self) -> &SchemaRef {
+        &self.schema
+    }
+
+    fn input(&self) -> &PhysicalPlan {
+        &self.input
+    }
+}
+
+impl From<PhysicalAggregatePlan> for PhysicalPlan {
+    fn from(value: PhysicalAggregatePlan) -> Self {
+        Self(Arc::new(PhysicalPlanKind::Aggregate(value)))
+    }
+}
+
+impl std::fmt::Display for PhysicalAggregatePlan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "AggregateExec: groupBy={}, aggExpr={}",
+            self.group_exprs
+                .iter()
+                .map(|expr| expr.to_string())
+                .collect::<Vec<String>>()
+                .join(", "),
+            self.agg_exprs
+                .iter()
+                .map(|expr| expr.to_string())
+                .collect::<Vec<String>>()
+                .join(", "),
+        )
     }
 }

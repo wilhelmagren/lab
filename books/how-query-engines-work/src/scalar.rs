@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use arrow::array::{
-    Array, ArrayRef, BooleanArray, Float32Array, Float64Array, Int8Array, Int16Array, Int32Array, Int64Array, LargeStringArray, NullArray, Scalar, StringArray, UInt8Array, UInt16Array, UInt32Array, UInt64Array
+    Array, ArrayRef, BooleanArray, Float32Array, Float64Array, Int8Array, Int16Array, Int32Array,
+    Int64Array, LargeStringArray, NullArray, Scalar, UInt8Array, UInt16Array, UInt32Array,
+    UInt64Array,
 };
 use arrow::datatypes::DataType;
 
@@ -12,7 +14,7 @@ where
     Scalar::new(Arc::new(s.into_inner()) as ArrayRef)
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, PartialOrd)]
 pub enum ScalarValue {
     Null,
     Boolean(bool),

@@ -13,22 +13,14 @@ use arrow::util::pretty::pretty_format_batches;
 
 use crate::context::SessionContext;
 use crate::logical::expr::col;
-use crate::logical::expr::lit;
+use crate::logical::expr::sum;
 
 fn main() {
     let ctx = SessionContext::new();
 
     let passengers = ctx.parquet("data/titanic.parquet");
 
-    let df = passengers
-        .filter(col("Name").eq(lit("Bystrom, Mrs. (Karolina)")))
-        .select(vec![
-            col("Name"),
-            col("Ticket"),
-            col("Survived"),
-            col("Fare"),
-            col("Sex"),
-        ]);
+    let df = passengers.agg(vec![col("Sex")], vec![sum(col("Survived"))]);
 
     let results: Vec<RecordBatch> = ctx.execute(&df).collect();
     println!("{}", pretty_format_batches(&results).unwrap());
