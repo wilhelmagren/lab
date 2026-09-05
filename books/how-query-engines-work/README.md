@@ -26,7 +26,8 @@ Summary
    16.63 ± 0.16 times faster than ./target/release/tqe
 ```
 
-full query takes 1min20s for TQE
+full query takes 1min20s for TQE (single threaded)
+i tried using rayon for the hashagg but the batches are so small it just gets slower
 
 BELOW IS DuckDB VS Polars
 

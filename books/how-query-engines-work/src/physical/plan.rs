@@ -1,3 +1,4 @@
+use std::collections::hash_map::Entry;
 use std::{collections::HashMap, sync::Arc};
 
 use arrow::{
@@ -6,6 +7,7 @@ use arrow::{
     datatypes::{DataType, FieldRef, Float64Type, Int8Type, Int64Type, Schema, SchemaRef},
     row::{OwnedRow, RowConverter, SortField},
 };
+use rayon::prelude::*;
 
 use crate::{
     data_source::{DataSourceRef, RecordBatchIterator},
@@ -25,6 +27,8 @@ pub enum PhysicalPlanKind {
 
 #[derive(Clone)]
 pub struct PhysicalPlan(Arc<PhysicalPlanKind>);
+
+type HashAgg = HashMap<OwnedRow, Vec<Accumulator>>;
 
 //
 // mental model:
@@ -284,11 +288,9 @@ fn format_schema(schema: &Schema) -> String {
         &schema
             .fields()
             .iter()
-            .map(|f| {
-                match f.is_nullable() {
-                    true => format!("{}({} nullable)", f.name(), f.data_type()),
-                    false => format!("{}({})", f.name(), f.data_type()),
-                }
+            .map(|f| match f.is_nullable() {
+                true => format!("{}({} nullable)", f.name(), f.data_type()),
+                false => format!("{}({})", f.name(), f.data_type()),
             })
             .collect::<Vec<String>>()
             .join(", "),
@@ -454,6 +456,25 @@ impl Accumulator {
         }
     }
 
+    /// merge intermediate states of two accumulators (self + other) into self
+    fn merge(&mut self, other: &Accumulator) {
+        match (self.kind(), &other.0) {
+            (AccumulatorKind::Min(left), AccumulatorKind::Min(right)) => {
+                left.merge(right);
+            }
+            (AccumulatorKind::Max(left), AccumulatorKind::Max(right)) => {
+                left.merge(right);
+            }
+            (AccumulatorKind::Sum(left), AccumulatorKind::Sum(right)) => {
+                left.merge(right);
+            }
+            (AccumulatorKind::Avg(left), AccumulatorKind::Avg(right)) => {
+                left.merge(right);
+            }
+            _ => unreachable!("cannot merge different acc kinds"),
+        }
+    }
+
     fn final_value(&mut self) -> ScalarValue {
         match self.kind() {
             AccumulatorKind::Min(acc) => acc.final_value(),
@@ -466,7 +487,7 @@ impl Accumulator {
 
 #[derive(Clone, Debug)]
 pub struct MaxAccumulator {
-    value: ScalarValue,
+    pub value: ScalarValue,
 }
 
 impl From<MaxAccumulator> for Accumulator {
@@ -576,14 +597,26 @@ impl MaxAccumulator {
     }
 
     /// Merge other intermediate values into this accumulator.
-    pub fn merge(&mut self, other: &ColumnarValue) {
-        self.accumulate(other);
+    pub fn merge(&mut self, other: &MaxAccumulator) {
+        match &other.value {
+            // noop
+            ScalarValue::Null => {}
+            value => match &self.value {
+                ScalarValue::Null => {
+                    self.value = value.clone();
+                }
+                current if value > current => {
+                    self.value = value.clone();
+                }
+                _ => {}
+            },
+        }
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct MinAccumulator {
-    value: ScalarValue,
+    pub value: ScalarValue,
 }
 
 impl MinAccumulator {
@@ -672,16 +705,40 @@ impl MinAccumulator {
     }
 
     /// Merge other intermediate values into this accumulator.
-    pub fn merge(&mut self, other: &ColumnarValue) {
-        self.accumulate(other);
+    pub fn merge(&mut self, other: &MinAccumulator) {
+        match &other.value {
+            // noop
+            ScalarValue::Null => {}
+            value => match &self.value {
+                ScalarValue::Null => {
+                    self.value = value.clone();
+                }
+                current if value < current => {
+                    self.value = value.clone();
+                }
+                _ => {}
+            },
+        }
+    }
+
+    fn update(&mut self, value: &ScalarValue) {
+        match &self.value {
+            ScalarValue::Null => {
+                self.value = value.clone();
+            }
+            current if value < current => {
+                self.value = value.clone();
+            }
+            _ => {}
+        }
     }
 }
 
 /// value is accumulated sum and count is number of rows for the group
 #[derive(Clone, Debug)]
 pub struct AvgAccumulator {
-    value: ScalarValue,
-    count: usize,
+    pub value: ScalarValue,
+    pub count: usize,
 }
 
 impl AvgAccumulator {
@@ -793,13 +850,31 @@ impl AvgAccumulator {
         }
     }
 
-    pub fn merge(&mut self, other: &ColumnarValue) {
-        self.accumulate(other);
+    /// Merge other intermediate values into this accumulator.
+    pub fn merge(&mut self, other: &AvgAccumulator) {
+        match (&mut self.value, &other.value) {
+            (_, ScalarValue::Null) => {}
+            (ScalarValue::Null, value) => {
+                self.value = value.clone();
+                self.count = other.count;
+            }
+            (ScalarValue::Int64(a), ScalarValue::Int64(b)) => {
+                *a += *b;
+                self.count += other.count;
+            }
+            (ScalarValue::Float64(a), ScalarValue::Float64(b)) => {
+                // self.value = ScalarValue::Float64(*a + *b);
+                *a += *b;
+                self.count += other.count;
+            }
+            // i only support f64 right now
+            _ => todo!(),
+        }
     }
 }
 #[derive(Clone, Debug)]
 pub struct SumAccumulator {
-    value: ScalarValue,
+    pub value: ScalarValue,
 }
 
 impl SumAccumulator {
@@ -896,10 +971,58 @@ impl SumAccumulator {
         self.value.clone()
     }
 
-    /// Merge this accumulator with another, used for parallel hash agg.
-    pub fn merge(&mut self, _other: &AvgAccumulator) {
+    /// Merge other intermediate values into this accumulator.
+    pub fn merge(&mut self, other: &SumAccumulator) {
+        match (&mut self.value, &other.value) {
+            (_, ScalarValue::Null) => {}
+            (ScalarValue::Null, value) => {
+                self.value = value.clone();
+            }
+            (ScalarValue::Int64(a), ScalarValue::Int64(b)) => {
+                *a += *b;
+            }
+            (ScalarValue::Float64(a), ScalarValue::Float64(b)) => {
+                // self.value = ScalarValue::Float64(*a + *b);
+                *a += *b;
+            }
+            // i only support f64 right now
+            _ => todo!(),
+        }
+    }
+
+    fn update(&mut self, value: ScalarValue) {
         todo!()
     }
+}
+
+fn make_accumulators(ops: &[AggregateOp]) -> Vec<Accumulator> {
+    ops.iter()
+        .map(|op| match op {
+            AggregateOp::Min => MinAccumulator::new().into(),
+            AggregateOp::Max => MaxAccumulator::new().into(),
+            AggregateOp::Sum => SumAccumulator::new().into(),
+            AggregateOp::Avg => AvgAccumulator::new().into(),
+            _ => unreachable!(),
+        })
+        .collect::<Vec<_>>()
+}
+
+fn merge_hashaggs(mut left: HashAgg, right: HashAgg) -> HashAgg {
+    for (key, right_accs) in right {
+        match left.entry(key) {
+            Entry::Vacant(entry) => {
+                entry.insert(right_accs);
+            }
+            Entry::Occupied(mut entry) => {
+                let leftaccs = entry.get_mut();
+                debug_assert_eq!(leftaccs.len(), right_accs.len());
+                for (lacc, racc) in leftaccs.iter_mut().zip(right_accs.iter()) {
+                    lacc.merge(racc);
+                }
+            }
+        }
+    }
+    left
 }
 
 #[derive(Clone)]
@@ -981,8 +1104,18 @@ impl PhysicalAggregatePlan {
             .iter()
             .map(|e| SortField::new(e.to_field(self.input.schema()).data_type().clone()))
             .collect();
+
         let row_converter = RowConverter::new(sort_fields).unwrap();
-        let mut hashagg: HashMap<OwnedRow, Vec<Accumulator>> = HashMap::new();
+        let mut hashagg = HashAgg::new();
+
+        let agg_ops = self
+            .agg_exprs
+            .iter()
+            .map(|e| match e.kind() {
+                PhysicalExprKind::Aggregate(agg) => agg.op.clone(),
+                _ => unreachable!("expected agg expression"),
+            })
+            .collect::<Vec<_>>();
 
         // O(k) where k is the number of batches
         for batch in batches {
@@ -997,6 +1130,7 @@ impl PhysicalAggregatePlan {
             // which are the unique groups that we want to partition on? we just put them in the hashmap and they become unique, problem solved
             let group_keys = row_converter.convert_columns(&columnar_group_keys).unwrap();
 
+            // Aggregate input expressions, evaluated ONCE per batch
             let agg_values = self
                 .agg_exprs
                 .iter()
@@ -1006,6 +1140,24 @@ impl PhysicalAggregatePlan {
                 })
                 .collect::<Vec<_>>();
 
+            let batch_hashagg = (0..batch.num_rows())
+                .into_par_iter()
+                .fold(HashAgg::new, |mut local_map, row_idx| {
+                    let gk = group_keys.row(row_idx).owned();
+                    let accs = local_map
+                        .entry(gk)
+                        .or_insert_with(|| make_accumulators(&agg_ops));
+                    for (acc, values) in accs.iter_mut().zip(agg_values.iter()) {
+                        acc.accumulate_row(values, row_idx);
+                    }
+                    local_map
+                })
+                .reduce(HashAgg::new, merge_hashaggs);
+
+            hashagg = merge_hashaggs(hashagg, batch_hashagg)
+
+            /*
+            this is the single threaded variant
             // O(n) where n is the number of rows in the batch
             for (row_idx, group_key) in group_keys.iter().enumerate() {
                 // if the groupkey entry does not exist, create a new accumulator for each agg expression
@@ -1036,6 +1188,7 @@ impl PhysicalAggregatePlan {
                     acc.accumulate_row(values, row_idx);
                 }
             }
+            */
         }
 
         // TODO: Avg is wrong because for each accumulator we calculate the avg
