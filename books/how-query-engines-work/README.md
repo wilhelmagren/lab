@@ -10,6 +10,7 @@ This is what I build from reading the "How Query Engines Work" book by Andy Grov
 
 
 BENCHMARK ON 1BRC query (using hyperfine)
+filtering on one group xd
 
 ```
 Benchmark 1: ./target/release/tqe
@@ -23,4 +24,22 @@ Benchmark 2: .venv/bin/python verify.py
 Summary
   .venv/bin/python verify.py ran
    16.63 ± 0.16 times faster than ./target/release/tqe
+```
+
+full query takes 1min20s for TQE
+
+BELOW IS DuckDB VS Polars
+
+```
+Benchmark 1: .venv/bin/python 1brc_duckdb.py
+  Time (mean ± σ):      2.463 s ±  0.033 s    [User: 35.840 s, System: 1.175 s]
+  Range (min … max):    2.411 s …  2.503 s    5 runs
+ 
+Benchmark 2: .venv/bin/python 1brc_polars.py
+  Time (mean ± σ):      9.580 s ±  0.277 s    [User: 110.349 s, System: 16.449 s]
+  Range (min … max):    9.331 s …  9.990 s    5 runs
+ 
+Summary
+  .venv/bin/python 1brc_duckdb.py ran
+    3.89 ± 0.12 times faster than .venv/bin/python 1brc_polars.py
 ```

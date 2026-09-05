@@ -34,7 +34,7 @@ fn main() {
     println!("======= 1BRC QUERY =======");
     let df = ctx
         .parquet("./data/weather_stations.parquet")
-        .filter(col("station_name").eq("Hualien"))
+        // .filter(col("station_name").eq("Hualien"))
         .agg(
             vec![col("station_name")],
             vec![
@@ -45,5 +45,5 @@ fn main() {
         );
 
     let results: Vec<RecordBatch> = ctx.execute(&df).collect();
-    println!("{}", pretty_format_batches(&results).unwrap());
+    // println!("{}", pretty_format_batches(&results).unwrap());
 }
