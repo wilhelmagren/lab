@@ -9,52 +9,18 @@ This is what I build from reading the "How Query Engines Work" book by Andy Grov
 **NO AI ALLOWED HERE, GO AWAY MR CLADUE**
 
 
+BENCHMARK ON 1BRC query (using hyperfine)
+
 ```
-                    User API
-                       │
-                       ▼
-                   DataFrame
-                       │
-                       ▼
-              ┌──────────────────┐
-              │     logical      │
-              │                  │
-              │ Expr             │
-              │ LogicalPlan      │
-              └────────┬─────────┘
-                       │
-                       ▼
-                 optimizer
-                       │
-                       ▼
-              ┌──────────────────┐
-              │     physical     │
-              │                  │
-              │ PhysicalExpr     │
-              │ ExecutionPlan    │
-              └────────┬─────────┘
-                       │
-                       ▼
-                Arrow kernels
-                       │
-                       ▼
-              Arrow RecordBatch
-```
-
-```rust
-use crate::context::SessionContext;
-use crate::logical::expr::{col, lit};
-
-fn main() {
-    let df= SessionContext::new()
-        .parquet("data/titanic.parquet")
-        .select(vec![col("Name"), col("Ticket"), col("Survived")])
-        .filter(col("Survived").eq(lit(1 as i64)))
-        .select(vec![col("Name"), col("Ticket")])
-        .limit(5);
-
-    for batch in ctx.execute(&df) {
-        println!("{:?}", batch);
-    }
-}
+Benchmark 1: ./target/release/tqe
+  Time (mean ± σ):     16.979 s ±  0.120 s    [User: 16.467 s, System: 0.365 s]
+  Range (min … max):   16.839 s … 17.145 s    5 runs
+ 
+Benchmark 2: .venv/bin/python verify.py
+  Time (mean ± σ):      1.021 s ±  0.006 s    [User: 12.851 s, System: 0.457 s]
+  Range (min … max):    1.014 s …  1.029 s    5 runs
+ 
+Summary
+  .venv/bin/python verify.py ran
+   16.63 ± 0.16 times faster than ./target/release/tqe
 ```

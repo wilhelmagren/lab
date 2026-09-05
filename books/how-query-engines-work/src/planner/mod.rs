@@ -7,7 +7,10 @@ use crate::{
         plan::{LogicalPlan, LogicalPlanKind},
     },
     physical::{
-        expr::{PhysicalBinaryExpr, PhysicalColumnExpr, PhysicalExpr, PhysicalLiteralExpr},
+        expr::{
+            PhysicalAggregateExpr, PhysicalBinaryExpr, PhysicalColumnExpr, PhysicalExpr,
+            PhysicalExprKind, PhysicalLiteralExpr,
+        },
         plan::{
             PhysicalAggregatePlan, PhysicalFilterPlan, PhysicalLimitPlan, PhysicalPlan,
             PhysicalProjectionPlan, PhysicalScanPlan,
@@ -58,7 +61,7 @@ impl Planner {
                     .collect::<Vec<PhysicalExpr>>(),
                 plan.agg_exprs
                     .iter()
-                    .map(|e| self.create_physical_expr(plan.input().clone(), e.clone()))
+                    .map(|e| self.create_physical_agg_expr(plan.input().clone(), e.clone()))
                     .collect::<Vec<PhysicalExpr>>(),
             )
             .into(),
@@ -87,7 +90,19 @@ impl Planner {
             // alias only affects naming during planning, as it gives a name to an expr
             // just evaluate the underlying expr, it has no specific physical repr
             LogicalExprKind::Alias(expr) => self.create_physical_expr(input, expr.expr().clone()),
-            LogicalExprKind::Aggregate(expr) => self.create_physical_expr(input, expr.expr.clone()),
+            _ => unreachable!(),
+        }
+    }
+
+    fn create_physical_agg_expr(&self, input: LogicalPlan, expr: LogicalExpr) -> PhysicalExpr {
+        match expr.kind() {
+            LogicalExprKind::Aggregate(expr) => {
+                PhysicalExpr::new(PhysicalExprKind::Aggregate(PhysicalAggregateExpr {
+                    op: expr.op.clone(),
+                    expr: self.create_physical_expr(input, expr.expr.clone()),
+                }))
+            }
+            _ => panic!("expected agg expr"),
         }
     }
 }

@@ -14,7 +14,7 @@ where
     Scalar::new(Arc::new(s.into_inner()) as ArrayRef)
 }
 
-#[derive(Clone, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub enum ScalarValue {
     Null,
     Boolean(bool),

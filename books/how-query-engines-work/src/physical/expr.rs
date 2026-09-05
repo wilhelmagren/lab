@@ -1,22 +1,25 @@
 use std::sync::Arc;
 
-use arrow::array::{ArrayRef, BooleanArray, Datum, PrimitiveArray, RecordBatch, Scalar, downcast_array};
+use arrow::array::{
+    ArrayRef, BooleanArray, Datum, RecordBatch, Scalar, downcast_array,
+};
 use arrow::compute::kernels::boolean::{and, or};
 use arrow::compute::kernels::cmp::{eq, gt, gt_eq, lt, lt_eq, neq};
 use arrow::compute::kernels::numeric::{add, div, mul, rem, sub};
-use arrow::datatypes::{Field, FieldRef, Schema, SchemaRef};
+use arrow::datatypes::{Field, FieldRef, Schema};
 use arrow::util::display::array_value_to_string;
 
-use crate::logical::expr::BinaryOp;
+use crate::logical::expr::{AggregateOp, BinaryOp};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum PhysicalExprKind {
     Column(PhysicalColumnExpr),
     Literal(PhysicalLiteralExpr),
     Binary(PhysicalBinaryExpr),
+    Aggregate(PhysicalAggregateExpr),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct PhysicalExpr(Arc<PhysicalExprKind>);
 
 impl PhysicalExpr {
@@ -33,6 +36,7 @@ impl PhysicalExpr {
             PhysicalExprKind::Column(expr) => expr.to_field(input),
             PhysicalExprKind::Literal(expr) => expr.to_field(),
             PhysicalExprKind::Binary(expr) => expr.to_field(input),
+            PhysicalExprKind::Aggregate(expr) => expr.to_field(input),
         }
     }
 
@@ -41,6 +45,7 @@ impl PhysicalExpr {
             PhysicalExprKind::Column(expr) => expr.evaluate(&input),
             PhysicalExprKind::Literal(expr) => expr.evaluate(),
             PhysicalExprKind::Binary(expr) => expr.evaluate(input),
+            _ => unreachable!(),
         }
     }
 }
@@ -51,6 +56,7 @@ impl std::fmt::Display for PhysicalExpr {
             PhysicalExprKind::Column(expr) => expr.fmt(f),
             PhysicalExprKind::Literal(expr) => expr.fmt(f),
             PhysicalExprKind::Binary(expr) => expr.fmt(f),
+            PhysicalExprKind::Aggregate(expr) => expr.fmt(f),
         }
     }
 }
@@ -78,7 +84,7 @@ impl ColumnarValue {
 }
 
 /// Reference a column (field) in a batch by index.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct PhysicalColumnExpr {
     index: usize,
 }
@@ -109,7 +115,7 @@ impl From<PhysicalColumnExpr> for PhysicalExpr {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct PhysicalLiteralExpr {
     value: Scalar<ArrayRef>,
 }
@@ -147,7 +153,7 @@ impl From<PhysicalLiteralExpr> for PhysicalExpr {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct PhysicalBinaryExpr {
     name: String,
     left: PhysicalExpr,
@@ -233,20 +239,20 @@ impl From<PhysicalBinaryExpr> for PhysicalExpr {
     }
 }
 
-/*
-// HOW TO DO AGGREGATES? THEY NEED STATE ACROSS BATCHES.
-#[derive(Clone)]
-struct PhysicalAggregateExpr {
-    op: AggregateOp,
-    expr: PhysicalExpr,
-    accumulated: Option<ScalarValue>,
+#[derive(Clone, Debug)]
+pub struct PhysicalAggregateExpr {
+    pub op: AggregateOp,
+    pub expr: PhysicalExpr,
 }
 
-pub enum Accumulator {
-    Min(MinAccumulator),
-    Max(MaxAccumulator),
-    Avg(AvgAccumulator),
-    Sum(SumAccumulator),
-    Count(CountAccumulator),
+impl PhysicalAggregateExpr {
+    fn to_field(&self, input: &Schema) -> FieldRef {
+        self.expr.to_field(input)
+    }
 }
-*/
+
+impl std::fmt::Display for PhysicalAggregateExpr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}({})", self.op, self.expr)
+    }
+}

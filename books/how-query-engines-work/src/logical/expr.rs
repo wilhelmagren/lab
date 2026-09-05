@@ -174,7 +174,7 @@ impl From<&str> for LogicalExpr {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BinaryOp {
     // math
     Add,
@@ -418,7 +418,7 @@ where
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum AggregateOp {
     Min,
     Max,
@@ -443,7 +443,7 @@ impl std::fmt::Display for AggregateOp {
 #[derive(Clone)]
 pub struct AggregateLogicalExpr {
     name: String,
-    op: AggregateOp,
+    pub op: AggregateOp,
     pub expr: LogicalExpr,
 }
 

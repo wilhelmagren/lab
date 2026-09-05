@@ -1,18 +1,16 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 
 use arrow::{
-    array::{ArrayRef, AsArray, BooleanArray, Int8Array, RecordBatch, downcast_array},
-    compute::{filter_record_batch, min},
-    datatypes::{DataType, FieldRef, Int8Type, Schema, SchemaRef},
-    row::{RowConverter, SortField},
+    array::{ArrayRef, AsArray, BooleanArray, RecordBatch, downcast_array},
+    compute::{concat, filter_record_batch, min},
+    datatypes::{DataType, FieldRef, Float64Type, Int8Type, Int64Type, Schema, SchemaRef},
+    row::{OwnedRow, RowConverter, SortField},
 };
 
 use crate::{
     data_source::{DataSourceRef, RecordBatchIterator},
-    physical::expr::{ColumnarValue, PhysicalExpr},
+    logical::expr::AggregateOp,
+    physical::expr::{ColumnarValue, PhysicalExpr, PhysicalExprKind},
     scalar::ScalarValue,
 };
 
@@ -280,12 +278,31 @@ impl From<PhysicalScanPlan> for PhysicalPlan {
     }
 }
 
+fn format_schema(schema: &Schema) -> String {
+    let mut s = String::new();
+    s.push_str(
+        &schema
+            .fields()
+            .iter()
+            .map(|f| {
+                match f.is_nullable() {
+                    true => format!("{}({} nullable)", f.name(), f.data_type()),
+                    false => format!("{}({})", f.name(), f.data_type()),
+                }
+            })
+            .collect::<Vec<String>>()
+            .join(", "),
+    );
+    s
+}
+
 impl std::fmt::Display for PhysicalScanPlan {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "ScanExec: schema={}, projection={:?}",
-            self.schema, self.projection
+            "ScanExec: schema=[{}], projection={:?}",
+            format_schema(&self.schema),
+            self.projection
         )
     }
 }
@@ -412,17 +429,126 @@ impl std::fmt::Display for PhysicalFilterPlan {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum AccumulatorKind {
     Min(MinAccumulator),
+    Max(MaxAccumulator),
+    Sum(SumAccumulator),
+    Avg(AvgAccumulator),
 }
 
-#[derive(Clone)]
-pub struct MinAccumulator {
+#[derive(Clone, Debug)]
+pub struct Accumulator(AccumulatorKind);
+
+impl Accumulator {
+    pub fn kind(&mut self) -> &mut AccumulatorKind {
+        &mut self.0
+    }
+
+    fn accumulate_row(&mut self, values: &ArrayRef, row: usize) {
+        match self.kind() {
+            AccumulatorKind::Min(acc) => acc.accumulate_row(values, row),
+            AccumulatorKind::Max(acc) => acc.accumulate_row(values, row),
+            AccumulatorKind::Sum(acc) => acc.accumulate_row(values, row),
+            AccumulatorKind::Avg(acc) => acc.accumulate_row(values, row),
+        }
+    }
+
+    fn final_value(&mut self) -> ScalarValue {
+        match self.kind() {
+            AccumulatorKind::Min(acc) => acc.final_value(),
+            AccumulatorKind::Max(acc) => acc.final_value(),
+            AccumulatorKind::Sum(acc) => acc.final_value(),
+            AccumulatorKind::Avg(acc) => acc.final_value(),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct MaxAccumulator {
     value: ScalarValue,
 }
 
-impl MinAccumulator {
+impl From<MaxAccumulator> for Accumulator {
+    fn from(value: MaxAccumulator) -> Self {
+        Self(AccumulatorKind::Max(value))
+    }
+}
+impl From<MinAccumulator> for Accumulator {
+    fn from(value: MinAccumulator) -> Self {
+        Self(AccumulatorKind::Min(value))
+    }
+}
+impl From<SumAccumulator> for Accumulator {
+    fn from(value: SumAccumulator) -> Self {
+        Self(AccumulatorKind::Sum(value))
+    }
+}
+impl From<AvgAccumulator> for Accumulator {
+    fn from(value: AvgAccumulator) -> Self {
+        Self(AccumulatorKind::Avg(value))
+    }
+}
+
+impl MaxAccumulator {
+    pub fn new() -> Self {
+        Self {
+            value: ScalarValue::Null,
+        }
+    }
+    pub fn accumulate_row(&mut self, values: &ArrayRef, row: usize) {
+        if values.is_null(row) {
+            return;
+        }
+
+        match values.data_type() {
+            DataType::Null => {}
+            DataType::Boolean => {}
+            DataType::Int8 => {
+                let arr = values.as_primitive::<Int8Type>();
+                let val = ScalarValue::Int8(arr.value(row));
+                match &self.value {
+                    ScalarValue::Null => {
+                        self.value = val;
+                    }
+                    current if val > *current => self.value = val,
+                    _ => {}
+                }
+            }
+            DataType::Int16 => {}
+            DataType::Int32 => {}
+            DataType::Int64 => {
+                let arr = values.as_primitive::<Int64Type>();
+                let val = ScalarValue::Int64(arr.value(row));
+                match &self.value {
+                    ScalarValue::Null => {
+                        self.value = val;
+                    }
+                    current if val > *current => self.value = val,
+                    _ => {}
+                }
+            }
+            DataType::UInt8 => {}
+            DataType::UInt16 => {}
+            DataType::UInt32 => {}
+            DataType::UInt64 => {}
+            DataType::Float32 => {}
+            DataType::Float64 => {
+                let arr = values.as_primitive::<Float64Type>();
+                let val = ScalarValue::Float64(arr.value(row));
+                match &self.value {
+                    ScalarValue::Null => {
+                        self.value = val;
+                    }
+                    current if val > *current => self.value = val,
+                    _ => {}
+                }
+            }
+            DataType::LargeUtf8 => {}
+            _ => {}
+        }
+    }
+
     pub fn accumulate(&mut self, values: &ColumnarValue) {
         let xd = values.clone().to_arrow_array();
         let prim = match xd.data_type() {
@@ -445,13 +571,334 @@ impl MinAccumulator {
         }
     }
 
-    pub fn final_value(&self) -> &ScalarValue {
-        &self.value
+    pub fn final_value(&self) -> ScalarValue {
+        self.value.clone()
     }
 
     /// Merge other intermediate values into this accumulator.
     pub fn merge(&mut self, other: &ColumnarValue) {
         self.accumulate(other);
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct MinAccumulator {
+    value: ScalarValue,
+}
+
+impl MinAccumulator {
+    pub fn new() -> Self {
+        Self {
+            value: ScalarValue::Null,
+        }
+    }
+    pub fn accumulate_row(&mut self, values: &ArrayRef, row: usize) {
+        if values.is_null(row) {
+            return;
+        }
+
+        match values.data_type() {
+            DataType::Null => {}
+            DataType::Boolean => {}
+            DataType::Int8 => {
+                let arr = values.as_primitive::<Int8Type>();
+                let val = ScalarValue::Int8(arr.value(row));
+                match &self.value {
+                    ScalarValue::Null => {
+                        self.value = val;
+                    }
+                    current if val < *current => self.value = val,
+                    _ => {}
+                }
+            }
+            DataType::Int16 => {}
+            DataType::Int32 => {}
+            DataType::Int64 => {
+                let arr = values.as_primitive::<Int64Type>();
+                let val = ScalarValue::Int64(arr.value(row));
+                match &self.value {
+                    ScalarValue::Null => {
+                        self.value = val;
+                    }
+                    current if val < *current => self.value = val,
+                    _ => {}
+                }
+            }
+            DataType::UInt8 => {}
+            DataType::UInt16 => {}
+            DataType::UInt32 => {}
+            DataType::UInt64 => {}
+            DataType::Float32 => {}
+            DataType::Float64 => {
+                let arr = values.as_primitive::<Float64Type>();
+                let val = ScalarValue::Float64(arr.value(row));
+                match &self.value {
+                    ScalarValue::Null => {
+                        self.value = val;
+                    }
+                    current if val < *current => self.value = val,
+                    _ => {}
+                }
+            }
+            DataType::LargeUtf8 => {}
+            _ => {}
+        }
+    }
+
+    pub fn accumulate(&mut self, values: &ColumnarValue) {
+        let xd = values.clone().to_arrow_array();
+        let prim = match xd.data_type() {
+            DataType::Int8 => xd.as_primitive::<Int8Type>(),
+            _ => todo!(),
+        };
+
+        match self.value {
+            ScalarValue::Null => {
+                self.value = min(prim).into();
+                return;
+            }
+            _ => {
+                let xd = min(prim).into();
+                if xd < self.value {
+                    self.value = xd;
+                }
+                return;
+            }
+        }
+    }
+
+    pub fn final_value(&self) -> ScalarValue {
+        self.value.clone()
+    }
+
+    /// Merge other intermediate values into this accumulator.
+    pub fn merge(&mut self, other: &ColumnarValue) {
+        self.accumulate(other);
+    }
+}
+
+/// value is accumulated sum and count is number of rows for the group
+#[derive(Clone, Debug)]
+pub struct AvgAccumulator {
+    value: ScalarValue,
+    count: usize,
+}
+
+impl AvgAccumulator {
+    pub fn new() -> Self {
+        Self {
+            value: ScalarValue::Null,
+            count: 0,
+        }
+    }
+    pub fn accumulate_row(&mut self, values: &ArrayRef, row: usize) {
+        self.count += 1;
+        if values.is_null(row) {
+            return;
+        }
+
+        match values.data_type() {
+            DataType::Null => {}
+            DataType::Boolean => {}
+            DataType::Int8 => {
+                let arr = values.as_primitive::<Int8Type>();
+                let val = ScalarValue::Int8(arr.value(row));
+                match &self.value {
+                    ScalarValue::Null => {
+                        self.value = val;
+                    }
+                    current if val < *current => self.value = val,
+                    _ => {}
+                }
+            }
+            DataType::Int16 => {}
+            DataType::Int32 => {}
+            DataType::Int64 => {
+                let arr = values.as_primitive::<Int64Type>();
+                let val = arr.value(row);
+                match &mut self.value {
+                    ScalarValue::Null => {
+                        self.value = ScalarValue::Int64(val);
+                    }
+                    ScalarValue::Int64(curr) => {
+                        *curr += val;
+                    }
+                    _ => {
+                        unreachable!()
+                    }
+                }
+            }
+            DataType::UInt8 => {}
+            DataType::UInt16 => {}
+            DataType::UInt32 => {}
+            DataType::UInt64 => {}
+            DataType::Float32 => {}
+            DataType::Float64 => {
+                let arr = values.as_primitive::<Float64Type>();
+                let val = arr.value(row);
+                match &mut self.value {
+                    ScalarValue::Null => {
+                        self.value = ScalarValue::Float64(val);
+                    }
+                    ScalarValue::Float64(curr) => {
+                        *curr += val;
+                    }
+                    _ => {
+                        unreachable!()
+                    }
+                }
+            }
+            DataType::LargeUtf8 => {}
+            _ => {}
+        }
+    }
+
+    pub fn accumulate(&mut self, values: &ColumnarValue) {
+        let xd = values.clone().to_arrow_array();
+        let prim = match xd.data_type() {
+            DataType::Int8 => xd.as_primitive::<Int8Type>(),
+            _ => todo!(),
+        };
+
+        match self.value {
+            ScalarValue::Null => {
+                self.value = min(prim).into();
+                return;
+            }
+            _ => {
+                let xd = min(prim).into();
+                if xd < self.value {
+                    self.value = xd;
+                }
+                return;
+            }
+        }
+    }
+
+    pub fn final_value(&self) -> ScalarValue {
+        match self.value {
+            ScalarValue::Null => todo!(),
+            ScalarValue::Boolean(_) => todo!(),
+            ScalarValue::Int8(_) => todo!(),
+            ScalarValue::Int16(_) => todo!(),
+            ScalarValue::Int32(_) => todo!(),
+            ScalarValue::Int64(_) => todo!(),
+            ScalarValue::UInt8(_) => todo!(),
+            ScalarValue::UInt16(_) => todo!(),
+            ScalarValue::UInt32(_) => todo!(),
+            ScalarValue::UInt64(_) => todo!(),
+            ScalarValue::Float32(_) => todo!(),
+            ScalarValue::Float64(sum) => (sum / self.count as f64).into(),
+            ScalarValue::Utf8(_) => todo!(),
+        }
+    }
+
+    pub fn merge(&mut self, other: &ColumnarValue) {
+        self.accumulate(other);
+    }
+}
+#[derive(Clone, Debug)]
+pub struct SumAccumulator {
+    value: ScalarValue,
+}
+
+impl SumAccumulator {
+    pub fn new() -> Self {
+        Self {
+            value: ScalarValue::Null,
+        }
+    }
+
+    pub fn accumulate_row(&mut self, values: &ArrayRef, row: usize) {
+        if values.is_null(row) {
+            return;
+        }
+
+        match values.data_type() {
+            DataType::Null => {}
+            DataType::Boolean => {}
+            DataType::Int8 => {
+                let arr = values.as_primitive::<Int8Type>();
+                let val = ScalarValue::Int8(arr.value(row));
+                match &self.value {
+                    ScalarValue::Null => {
+                        self.value = val;
+                    }
+                    current if val < *current => self.value = val,
+                    _ => {}
+                }
+            }
+            DataType::Int16 => {}
+            DataType::Int32 => {}
+            DataType::Int64 => {
+                let arr = values.as_primitive::<Int64Type>();
+                let val = arr.value(row);
+                match &mut self.value {
+                    ScalarValue::Null => {
+                        self.value = ScalarValue::Int64(val);
+                    }
+                    ScalarValue::Int64(curr) => {
+                        *curr += val;
+                    }
+                    _ => {
+                        unreachable!()
+                    }
+                }
+            }
+            DataType::UInt8 => {}
+            DataType::UInt16 => {}
+            DataType::UInt32 => {}
+            DataType::UInt64 => {}
+            DataType::Float32 => {}
+            DataType::Float64 => {
+                let arr = values.as_primitive::<Float64Type>();
+                let val = arr.value(row);
+                match &mut self.value {
+                    ScalarValue::Null => {
+                        self.value = ScalarValue::Float64(val);
+                    }
+                    ScalarValue::Float64(curr) => {
+                        *curr += val;
+                    }
+                    _ => {
+                        unreachable!()
+                    }
+                }
+            }
+            DataType::LargeUtf8 => {}
+            _ => {}
+        }
+    }
+
+    pub fn accumulate(&mut self, values: &ColumnarValue) {
+        let xd = values.clone().to_arrow_array();
+        let prim = match xd.data_type() {
+            DataType::Int8 => xd.as_primitive::<Int8Type>(),
+            _ => todo!(),
+        };
+
+        match self.value {
+            ScalarValue::Null => {
+                self.value = min(prim).into();
+                return;
+            }
+            _ => {
+                let xd = min(prim).into();
+                if xd < self.value {
+                    self.value = xd;
+                }
+                return;
+            }
+        }
+    }
+
+    pub fn final_value(&self) -> ScalarValue {
+        self.value.clone()
+    }
+
+    /// Merge this accumulator with another, used for parallel hash agg.
+    pub fn merge(&mut self, _other: &AvgAccumulator) {
+        todo!()
     }
 }
 
@@ -519,6 +966,7 @@ impl PhysicalAggregatePlan {
     /// if we have N groupBy cols, and M aggExpressions, we have to for each groupBy col and for each aggExpression
     /// accumulate(agg_expr.evaluate(batch))
     ///
+    // THIS IS BLOCKING
     pub fn execute(&self) -> RecordBatchIterator {
         let batches = self.input.execute();
 
@@ -526,45 +974,120 @@ impl PhysicalAggregatePlan {
         // the full input before we can continue from this operation
 
         // we need to hash by the group_exprs, and for that we need to... evaluate the exprs?..
-        // and tranpose to row format
+        // and transpose to row format
 
         let sort_fields = self
             .group_exprs
             .iter()
             .map(|e| SortField::new(e.to_field(self.input.schema()).data_type().clone()))
             .collect();
-        let mut row_converter = RowConverter::new(sort_fields).unwrap();
+        let row_converter = RowConverter::new(sort_fields).unwrap();
+        let mut hashagg: HashMap<OwnedRow, Vec<Accumulator>> = HashMap::new();
 
-        let mut hashagg: HashMap<String, Vec<MinAccumulator>> = HashMap::new();
+        // O(k) where k is the number of batches
         for batch in batches {
-            // for simplicity, assume we only have one groupBy col
-            // this gives us [["a","b","a","c","b"]], a columnar array with ALL group keys
-            let all_group_keys = self
+            // this gives us [["a","b","a","c","b"], [1,2,3,1,1]]
+            let columnar_group_keys = self
                 .group_exprs
                 .iter()
                 .map(|e| e.evaluate(&batch).to_arrow_array())
                 .collect::<Vec<ArrayRef>>();
-            let rows = row_converter.convert_columns(&all_group_keys).unwrap();
 
+            // here we have [["a", 1],["b", 2],["a", 3],["c", 1],["b", 1]]
+            // which are the unique groups that we want to partition on? we just put them in the hashmap and they become unique, problem solved
+            let group_keys = row_converter.convert_columns(&columnar_group_keys).unwrap();
 
-            // for each group expression, for each group key, for each agg expr
+            let agg_values = self
+                .agg_exprs
+                .iter()
+                .map(|e| match e.kind() {
+                    PhysicalExprKind::Aggregate(agg) => agg.expr.evaluate(&batch).to_arrow_array(),
+                    _ => unreachable!("AggregateExec must contain agg expressions only"),
+                })
+                .collect::<Vec<_>>();
 
-            for group_keys in all_group_keys {
-                // i give up
-            }
+            // O(n) where n is the number of rows in the batch
+            for (row_idx, group_key) in group_keys.iter().enumerate() {
+                // if the groupkey entry does not exist, create a new accumulator for each agg expression
+                let accumulators = hashagg.entry(group_key.owned()).or_insert_with(|| {
+                    self.agg_exprs
+                        .iter()
+                        .map(|e| {
+                            let agg = match e.kind() {
+                                PhysicalExprKind::Aggregate(agg) => agg,
+                                _ => unreachable!(),
+                            };
+                            let acc = match agg.op {
+                                AggregateOp::Min => MinAccumulator::new().into(),
+                                AggregateOp::Max => MaxAccumulator::new().into(),
+                                AggregateOp::Sum => SumAccumulator::new().into(),
+                                AggregateOp::Avg => AvgAccumulator::new().into(),
+                                _ => unreachable!(),
+                            };
+                            // dbg!(&agg.op);
+                            // dbg!(&acc);
+                            acc
+                        })
+                        .collect::<Vec<Accumulator>>()
+                });
 
-            for gk in group_keys {
-                if let Some(accs) = hashagg.get(&format!("{:?}", gk.unwrap())) {
-                    for expr in self.agg_exprs {
-                        for acc in accs.iter_mut() {
-                            acc.accumulate(&expr.evaluate(&batch))
-                        }
-                    }
+                // ~O(m) where m is the number of aggregate expressions
+                for (acc, values) in accumulators.iter_mut().zip(agg_values.iter()) {
+                    acc.accumulate_row(values, row_idx);
                 }
             }
         }
 
-        todo!()
+        // TODO: Avg is wrong because for each accumulator we calculate the avg
+        // and then what do we do with that value?
+
+        // ("a", 1) -> [min=3, count=7]
+        // ("b", 2) -> [min=8, count=2]
+        // ("c", 1) -> [min=4, count=5]
+        //
+        // build two sets of output columns
+        // group cols  agg cols
+        // ----------  --------
+        //  "a", 1      3, 7
+        //  "b", 2      8, 2
+        //  "c", 1      4, 5
+
+        // this becomes [["a", 1], ["b", 2], ["c", 1]]
+        let mut group_rows = Vec::new();
+
+        // this is [[Array(3), Array(7)], [Array(8), Array(2)], [Array(4), Array(5)]]
+        let mut agg_values = Vec::new();
+        for (gk, accs) in hashagg.iter_mut() {
+            group_rows.push(gk);
+            agg_values.push(
+                accs.iter_mut()
+                    .map(|acc| acc.final_value().clone().to_arrow_scalar().into_inner())
+                    .collect::<Vec<ArrayRef>>(),
+            );
+        }
+
+        let group_cols = row_converter
+            .convert_rows(group_rows.iter().map(|r| r.row()))
+            .unwrap();
+        let mut agg_cols = Vec::new();
+        for agg_idx in 0..self.agg_exprs.len() {
+            let arrs = agg_values
+                .iter()
+                .map(|gv| gv[agg_idx].as_ref())
+                .collect::<Vec<_>>();
+            agg_cols.push(concat(&arrs).unwrap());
+        }
+
+        let batch = RecordBatch::try_new(
+            self.schema.clone(),
+            group_cols
+                .iter()
+                .chain(agg_cols.iter())
+                .map(|a| a.clone())
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        Box::new(std::iter::once(batch))
     }
 
     fn schema(&self) -> &SchemaRef {
@@ -586,7 +1109,7 @@ impl std::fmt::Display for PhysicalAggregatePlan {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "AggregateExec: groupBy={}, aggExpr={}",
+            "HashAggregateExec: groupBy=[{}], aggExpr=[{}]",
             self.group_exprs
                 .iter()
                 .map(|expr| expr.to_string())
