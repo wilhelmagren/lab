@@ -16,7 +16,6 @@ use crate::logical::expr::avg;
 use crate::logical::expr::col;
 use crate::logical::expr::max;
 use crate::logical::expr::min;
-use crate::logical::expr::sum;
 
 fn main() {
     let ctx = SessionContext::new();
@@ -45,5 +44,5 @@ fn main() {
         );
 
     let results: Vec<RecordBatch> = ctx.execute(&df).collect();
-    // println!("{}", pretty_format_batches(&results).unwrap());
+    println!("{}", pretty_format_batches(&results).unwrap());
 }

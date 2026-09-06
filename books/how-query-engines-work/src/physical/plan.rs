@@ -7,7 +7,6 @@ use arrow::{
     datatypes::{DataType, FieldRef, Float64Type, Int8Type, Int64Type, Schema, SchemaRef},
     row::{OwnedRow, RowConverter, SortField},
 };
-use rayon::prelude::*;
 
 use crate::{
     data_source::{DataSourceRef, RecordBatchIterator},
@@ -1108,6 +1107,7 @@ impl PhysicalAggregatePlan {
         let row_converter = RowConverter::new(sort_fields).unwrap();
         let mut hashagg = HashAgg::new();
 
+        /*
         let agg_ops = self
             .agg_exprs
             .iter()
@@ -1116,6 +1116,7 @@ impl PhysicalAggregatePlan {
                 _ => unreachable!("expected agg expression"),
             })
             .collect::<Vec<_>>();
+        */
 
         // O(k) where k is the number of batches
         for batch in batches {
@@ -1140,6 +1141,7 @@ impl PhysicalAggregatePlan {
                 })
                 .collect::<Vec<_>>();
 
+            /*
             let batch_hashagg = (0..batch.num_rows())
                 .into_par_iter()
                 .fold(HashAgg::new, |mut local_map, row_idx| {
@@ -1155,9 +1157,8 @@ impl PhysicalAggregatePlan {
                 .reduce(HashAgg::new, merge_hashaggs);
 
             hashagg = merge_hashaggs(hashagg, batch_hashagg)
+            */
 
-            /*
-            this is the single threaded variant
             // O(n) where n is the number of rows in the batch
             for (row_idx, group_key) in group_keys.iter().enumerate() {
                 // if the groupkey entry does not exist, create a new accumulator for each agg expression
@@ -1188,7 +1189,6 @@ impl PhysicalAggregatePlan {
                     acc.accumulate_row(values, row_idx);
                 }
             }
-            */
         }
 
         // TODO: Avg is wrong because for each accumulator we calculate the avg

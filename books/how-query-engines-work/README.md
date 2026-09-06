@@ -2,6 +2,8 @@
 
 This is what I build from reading the "How Query Engines Work" book by Andy Grove.
 
+It is a pull-based, vectorized, (sometimes) streaming, query engine written in Rust.
+
 - https://howqueryengineswork.com/00-introduction.html
 - https://github.com/andygrove/how-query-engines-work
 - https://freddygabbay.github.io/AGPC-ISCA2025/Accelerating%20Hash%20Aggregate%20for%20Big%20Data%20Analytics.pdf
