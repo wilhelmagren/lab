@@ -12,8 +12,7 @@ use crate::{
             PhysicalExprKind, PhysicalLiteralExpr,
         },
         plan::{
-            PhysicalAggregatePlan, PhysicalFilterPlan, PhysicalLimitPlan, PhysicalPlan,
-            PhysicalProjectionPlan, PhysicalScanPlan,
+            PhysicalAggregatePlan, PhysicalFilterPlan, PhysicalJoinPlan, PhysicalLimitPlan, PhysicalPlan, PhysicalProjectionPlan, PhysicalScanPlan
         },
     },
 };
@@ -65,7 +64,7 @@ impl Planner {
                     .collect::<Vec<PhysicalExpr>>(),
             )
             .into(),
-            _ => todo!(),
+            LogicalPlanKind::Join(plan) = PhysicalJoinPlan,
         }
     }
 

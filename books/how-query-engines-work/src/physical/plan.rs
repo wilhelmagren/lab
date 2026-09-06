@@ -1,6 +1,7 @@
 use std::collections::hash_map::Entry;
 use std::{collections::HashMap, sync::Arc};
 
+use arrow::row::{Row, Rows};
 use arrow::{
     array::{ArrayRef, AsArray, BooleanArray, RecordBatch, downcast_array},
     compute::{concat, filter_record_batch, min},
@@ -8,6 +9,7 @@ use arrow::{
     row::{OwnedRow, RowConverter, SortField},
 };
 
+use crate::logical::plan::{JoinKey, JoinType};
 use crate::{
     data_source::{DataSourceRef, RecordBatchIterator},
     logical::expr::AggregateOp,
@@ -1191,9 +1193,6 @@ impl PhysicalAggregatePlan {
             }
         }
 
-        // TODO: Avg is wrong because for each accumulator we calculate the avg
-        // and then what do we do with that value?
-
         // ("a", 1) -> [min=3, count=7]
         // ("b", 2) -> [min=8, count=2]
         // ("c", 1) -> [min=4, count=5]
@@ -1273,6 +1272,179 @@ impl std::fmt::Display for PhysicalAggregatePlan {
                 .map(|expr| expr.to_string())
                 .collect::<Vec<String>>()
                 .join(", "),
+        )
+    }
+}
+
+#[derive(Clone)]
+pub struct PhysicalJoinPlan {
+    left: PhysicalPlan,
+    right: PhysicalPlan,
+    how: JoinType,
+    left_keys: Vec<usize>,
+    right_keys: Vec<usize>,
+    schema: SchemaRef,
+}
+
+impl PhysicalJoinPlan {
+    /// Join types:
+    ///
+    /// Inner join: returns rows where the join condition matches in both tables.
+    /// Left (outer) join: returns all rows from the left table with matching rows
+    ///   from the right table where available.
+    /// Right (outer) join: is the mirror of left outer join.
+    /// Full (outer) join: returns all rows from both tables, matching where posible.
+    /// Cross join: returns every combination of rows from both tables.
+    /// Semi join: returns rows from left table if they exist in the right table, but
+    ///   does not include columns from the right table.
+    /// Anti join: returns rows from the left table where no match exists in the right table.
+    ///
+    /// Join conditions:
+    ///
+    /// Equi-joins: equality condition (ON a.col = b.col)
+    /// Non-equi joins: inequality or range condition.
+    ///
+    /// Join algorithms:
+    ///
+    /// Nested loop join O(n x m) if condition is ~O(1):
+    ///   for each row L in left_table:
+    ///     for each row R in right_table:
+    ///       if matches(L, R): emit(L, R)
+    ///
+    ///   simple but slow for large tables, useful when:
+    ///     - one table is very small
+    ///     - an index exists on the join column of the inner table
+    ///     - the join condition is not an equality (non-equi join)
+    ///
+    /// Sort-Merge join O(nlog(n) + mlog(m)) for sorting, plus O(n + m) for merging
+    ///   sort left_table by join_key
+    ///   sort right_table by join_key
+    ///
+    ///   while both tables have rows:
+    ///     if left.key == right.key:
+    ///       emit all matching combinations
+    ///       advance both
+    ///     else if left.key < right.key:
+    ///       advance left
+    ///     else
+    ///       advance right
+    ///
+    ///   efficient when:
+    ///     - data is already sorted by join key
+    ///     - the result of the join needs to be sorted anyway
+    ///     - memory is limited (external sort can spill to disk)
+    ///
+    /// Hash join O(n + m) assuming good hash distribution
+    ///   # build phase
+    ///   hashtable = {}
+    ///   for each row R in build_table:
+    ///     key = R.join_col
+    ///     hashtable[key].append(R)
+    ///
+    ///   # probe phase
+    ///   for each row L in probe_table:
+    ///     key = L.join_col
+    ///     for each match in hashtable[key]:
+    ///       emit(L, match)
+    ///
+    ///   Fastest for equi-joins when:
+    ///     - the smaller table fits in memory
+    ///     - the join condition uses equality
+    ///
+    pub fn execute(&self) -> RecordBatchIterator {
+        // build phase
+        let mut hashtable: HashMap<OwnedRow, Vec<OwnedRow>> = HashMap::new();
+        let build_sort_fields = self
+            .right
+            .schema()
+            .fields()
+            .iter()
+            .map(|f| SortField::new(f.data_type().clone()))
+            .collect();
+
+        let build_row_converter = RowConverter::new(build_sort_fields).unwrap();
+        for batch in self.right.execute() {
+            let keycols = batch.project(&self.right_keys).unwrap();
+
+            let keys = build_row_converter
+                .convert_columns(keycols.columns())
+                .unwrap();
+            let rows = build_row_converter
+                .convert_columns(batch.columns())
+                .unwrap();
+
+            for (k, r) in keys.iter().zip(rows.iter()) {
+                hashtable
+                    .entry(k.owned())
+                    .and_modify(|v| v.push(r.owned()))
+                    .or_insert(vec![r.owned()]);
+            }
+        }
+
+        // probe phase
+        let probe_sort_fields = self
+            .right
+            .schema()
+            .fields()
+            .iter()
+            .map(|f| SortField::new(f.data_type().clone()))
+            .collect();
+
+        let probe_row_converter = RowConverter::new(probe_sort_fields).unwrap();
+
+        let mut outputs = Vec::new();
+
+        self.left.execute().for_each(|batch| {
+            let keycols = batch.project(&self.left_keys).unwrap();
+            let probe_keys = probe_row_converter
+                .convert_columns(keycols.columns())
+                .unwrap();
+
+            // i have all the left rows as cols, but the right rows as rows because they are in
+            // the hashmap, when I have a match on the key, i want to combine the left rows with the right,
+            // easiest would to take the left column arrays, convert the matching right rows to col arrays,
+            // create record batch of them
+            for k in probe_keys.iter() {
+                let maybe_matches = hashtable.get(&k.owned());
+                match self.how {
+                    // only take rows if match in both tables
+                    JoinType::Inner => match maybe_matches {
+                        Some(rows) => {
+                            let converted = build_row_converter
+                                .convert_rows(rows.iter().map(|or| or.row()))
+                                .unwrap();
+                            let mut merged = batch.columns().to_vec();
+                            merged.extend_from_slice(&converted);
+                            outputs.push(
+                                RecordBatch::try_from_iter(
+                                    self.schema
+                                        .fields()
+                                        .iter()
+                                        .zip(merged.iter())
+                                        .map(|(f, a)| (f.name(), a.clone())),
+                                )
+                                .unwrap(),
+                            );
+                        }
+                        None => {
+                            continue;
+                        }
+                    },
+                    JoinType::Left => todo!(),
+                    JoinType::Right => todo!(),
+                }
+            }
+        });
+        Box::new(outputs.into_iter())
+    }
+}
+
+impl std::fmt::Display for PhysicalJoinPlan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "HashJoinExec: type={}, on=[{:?},{:?}]",
+            self.how, self.left_keys, self.right_keys,
         )
     }
 }
