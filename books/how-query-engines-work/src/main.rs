@@ -1,24 +1,32 @@
-pub mod context;
-pub mod data_source;
-pub mod dataframe;
-pub mod logical;
-pub mod optimizer;
-pub mod physical;
-pub mod planner;
-pub mod scalar;
-pub mod sql;
-
 use arrow::array::RecordBatch;
 use arrow::util::pretty::pretty_format_batches;
+use bytes::Bytes;
 
-use crate::context::SessionContext;
-use crate::logical::expr::avg;
-use crate::logical::expr::col;
-use crate::logical::expr::max;
-use crate::logical::expr::min;
+use tqe::context::SessionContext;
+use tqe::logical::expr::avg;
+use tqe::logical::expr::col;
+use tqe::logical::expr::max;
+use tqe::logical::expr::min;
 
 fn main() {
     let ctx = SessionContext::new();
+
+    let data = std::fs::read("./data/weather_stations_small.parquet").unwrap();
+
+    let df = ctx
+        .parquet_bytes("weather_stations", Bytes::from(data))
+        .agg(
+            vec![col("station_name")],
+            vec![
+                min(col("measurement")),
+                max(col("measurement")),
+                avg(col("measurement")),
+            ],
+        );
+
+    let results: Vec<RecordBatch> = ctx.execute(&df).collect();
+
+    println!("{}", pretty_format_batches(&results).unwrap());
 
     /*
     println!("======= TITANIC QUERY =======");
@@ -28,7 +36,6 @@ fn main() {
 
     let results: Vec<RecordBatch> = ctx.execute(&df).collect();
     println!("{}", pretty_format_batches(&results).unwrap());
-    */
 
     println!("======= 1BRC QUERY =======");
     let df = ctx
@@ -45,4 +52,5 @@ fn main() {
 
     let results: Vec<RecordBatch> = ctx.execute(&df).collect();
     println!("{}", pretty_format_batches(&results).unwrap());
+    */
 }

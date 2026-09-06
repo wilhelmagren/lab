@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use bytes::Bytes;
+
 use crate::{
     data_source::{
         DataSource, RecordBatchIterator, parquet::ParquetDataSource, registry::SourceRegistry,
@@ -20,7 +22,20 @@ impl SessionContext {
             sources: Arc::new(SourceRegistry::new()),
         }
     }
+    pub fn parquet_bytes(&self, name: impl Into<String>, bytes: Bytes) -> DataFrame {
+        let source = ParquetDataSource::from_bytes(name, bytes);
 
+        let name = source.name().to_owned();
+        let schema = source.schema().clone();
+
+        let source_id = self.sources.register(source);
+
+        let plan = LogicalPlan::scan(source_id, name, schema);
+
+        DataFrame::new(plan, self.sources.clone())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn parquet(&self, path: impl Into<String>) -> DataFrame {
         let source = ParquetDataSource::new(path);
 
