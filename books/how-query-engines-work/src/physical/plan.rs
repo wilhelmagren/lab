@@ -846,7 +846,7 @@ impl AvgAccumulator {
 
     pub fn final_value(&self) -> ScalarValue {
         match self.value {
-            ScalarValue::Null => todo!(),
+            ScalarValue::Null => ScalarValue::Null,
             ScalarValue::Boolean(_) => todo!(),
             ScalarValue::Int8(_) => todo!(),
             ScalarValue::Int16(_) => todo!(),
