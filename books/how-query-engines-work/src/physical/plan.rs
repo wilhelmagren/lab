@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::collections::hash_map::Entry;
 use std::{collections::HashMap, sync::Arc};
 
@@ -24,6 +25,7 @@ pub enum PhysicalPlanKind {
     Filter(PhysicalFilterPlan),
     Projection(PhysicalProjectionPlan),
     Aggregate(PhysicalAggregatePlan),
+    Join(PhysicalJoinPlan),
 }
 
 #[derive(Clone)]
@@ -57,6 +59,7 @@ impl PhysicalPlan {
             PhysicalPlanKind::Filter(plan) => plan.schema(),
             PhysicalPlanKind::Projection(plan) => plan.schema(),
             PhysicalPlanKind::Aggregate(plan) => plan.schema(),
+            PhysicalPlanKind::Join(plan) => plan.schema(),
         }
     }
 
@@ -67,6 +70,7 @@ impl PhysicalPlan {
             PhysicalPlanKind::Filter(plan) => vec![plan.input()],
             PhysicalPlanKind::Projection(plan) => vec![plan.input()],
             PhysicalPlanKind::Aggregate(plan) => vec![plan.input()],
+            PhysicalPlanKind::Join(plan) => vec![&plan.left, &plan.right],
         }
     }
 
@@ -77,6 +81,7 @@ impl PhysicalPlan {
             PhysicalPlanKind::Filter(plan) => plan.execute(),
             PhysicalPlanKind::Projection(plan) => plan.execute(),
             PhysicalPlanKind::Aggregate(plan) => plan.execute(),
+            PhysicalPlanKind::Join(plan) => plan.execute(),
         }
     }
 
@@ -103,6 +108,7 @@ impl std::fmt::Display for PhysicalPlan {
             PhysicalPlanKind::Filter(plan) => plan.fmt(f),
             PhysicalPlanKind::Projection(plan) => plan.fmt(f),
             PhysicalPlanKind::Aggregate(plan) => plan.fmt(f),
+            PhysicalPlanKind::Join(plan) => plan.fmt(f),
         }
     }
 }
@@ -1278,15 +1284,76 @@ impl std::fmt::Display for PhysicalAggregatePlan {
 
 #[derive(Clone)]
 pub struct PhysicalJoinPlan {
-    left: PhysicalPlan,
-    right: PhysicalPlan,
-    how: JoinType,
-    left_keys: Vec<usize>,
-    right_keys: Vec<usize>,
+    pub left: PhysicalPlan,
+    pub right: PhysicalPlan,
+    pub how: JoinType,
+    pub left_keys: Vec<usize>,
+    pub right_keys: Vec<usize>,
     schema: SchemaRef,
 }
 
 impl PhysicalJoinPlan {
+    pub fn new(
+        left: PhysicalPlan,
+        right: PhysicalPlan,
+        how: JoinType,
+        left_keys: Vec<usize>,
+        right_keys: Vec<usize>,
+    ) -> Self {
+        let duplicate_keys = left_keys
+            .iter()
+            .zip(right_keys.iter())
+            .filter(|(l, r)| l == r)
+            .map(|(l, _)| *l)
+            .collect::<HashSet<usize>>();
+
+        let fields = match how {
+            // if it is a inner or left join, we take the keys in left relation
+            // and those in right that are not "duplicates"
+            JoinType::Inner | JoinType::Left => left
+                .schema()
+                .fields()
+                .iter()
+                .enumerate()
+                .chain(
+                    right
+                        .schema()
+                        .fields()
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| !duplicate_keys.contains(i)),
+                )
+                .map(|(_, f)| f)
+                .cloned()
+                .collect::<Vec<_>>(),
+            // take all right relation cols and filter away the left based on "duplicates"
+            JoinType::Right => left
+                .schema()
+                .fields()
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| !duplicate_keys.contains(i))
+                .chain(right.schema().fields().iter().enumerate())
+                .map(|(_, f)| f)
+                .cloned()
+                .collect::<Vec<_>>(),
+        };
+
+        let schema = Arc::new(Schema::new(fields));
+
+        Self {
+            left,
+            right,
+            how,
+            left_keys,
+            right_keys,
+            schema,
+        }
+    }
+
+    fn schema(&self) -> &SchemaRef {
+        &self.schema
+    }
     /// Join types:
     ///
     /// Inner join: returns rows where the join condition matches in both tables.
@@ -1354,7 +1421,19 @@ impl PhysicalJoinPlan {
     pub fn execute(&self) -> RecordBatchIterator {
         // build phase
         let mut hashtable: HashMap<OwnedRow, Vec<OwnedRow>> = HashMap::new();
-        let build_sort_fields = self
+        let build_key_sort_fields = self
+            .right_keys
+            .iter()
+            .map(|i| {
+                SortField::new(
+                    self.right.schema().fields().to_vec()[*i]
+                        .data_type()
+                        .clone(),
+                )
+            })
+            .collect();
+
+        let build_row_sort_fields = self
             .right
             .schema()
             .fields()
@@ -1362,14 +1441,17 @@ impl PhysicalJoinPlan {
             .map(|f| SortField::new(f.data_type().clone()))
             .collect();
 
-        let build_row_converter = RowConverter::new(build_sort_fields).unwrap();
+        let build_key_converter = RowConverter::new(build_key_sort_fields).unwrap();
+        let build_row_converter = RowConverter::new(build_row_sort_fields).unwrap();
         for batch in self.right.execute() {
             let keycols = batch.project(&self.right_keys).unwrap();
 
-            let keys = build_row_converter
+            let keys = build_key_converter
                 .convert_columns(keycols.columns())
                 .unwrap();
+
             let rows = build_row_converter
+                // exclude the key cols?
                 .convert_columns(batch.columns())
                 .unwrap();
 
@@ -1382,21 +1464,25 @@ impl PhysicalJoinPlan {
         }
 
         // probe phase
-        let probe_sort_fields = self
-            .right
-            .schema()
-            .fields()
+        let probe_key_sort_fields = self
+            .left_keys
             .iter()
-            .map(|f| SortField::new(f.data_type().clone()))
+            .map(|i| {
+                SortField::new(
+                    self.right.schema().fields().to_vec()[*i]
+                        .data_type()
+                        .clone(),
+                )
+            })
             .collect();
 
-        let probe_row_converter = RowConverter::new(probe_sort_fields).unwrap();
+        let probe_key_converter = RowConverter::new(probe_key_sort_fields).unwrap();
 
         let mut outputs = Vec::new();
 
         self.left.execute().for_each(|batch| {
             let keycols = batch.project(&self.left_keys).unwrap();
-            let probe_keys = probe_row_converter
+            let probe_keys = probe_key_converter
                 .convert_columns(keycols.columns())
                 .unwrap();
 
@@ -1404,41 +1490,84 @@ impl PhysicalJoinPlan {
             // the hashmap, when I have a match on the key, i want to combine the left rows with the right,
             // easiest would to take the left column arrays, convert the matching right rows to col arrays,
             // create record batch of them
+            //
+            //  basically we have this at this point
+            //
+            // left side as RecordBatch (Vec<dyn Array>)
+            //  [
+            //   [
+            //     1,
+            //     2,
+            //     3,
+            //   ],
+            //   [
+            //     "guldan",
+            //     "godwyn",
+            //     "gwynn",
+            //   ],
+            //   [
+            //     123445,
+            //     89,
+            //     1000000,
+            //   ],
+            //
+            // right side we get the matching rows
+            //
+            //  [
+            //   [1, "warlock", -123000.41],
+            //   [2, "gigachad", 9999999.12],
+            //   [3, "cringelord", 133.7],
+            //  ]
+            //
+            let mut matches = Vec::new();
             for k in probe_keys.iter() {
                 let maybe_matches = hashtable.get(&k.owned());
                 match self.how {
                     // only take rows if match in both tables
                     JoinType::Inner => match maybe_matches {
                         Some(rows) => {
-                            let converted = build_row_converter
-                                .convert_rows(rows.iter().map(|or| or.row()))
-                                .unwrap();
-                            let mut merged = batch.columns().to_vec();
-                            merged.extend_from_slice(&converted);
-                            outputs.push(
-                                RecordBatch::try_from_iter(
-                                    self.schema
-                                        .fields()
-                                        .iter()
-                                        .zip(merged.iter())
-                                        .map(|(f, a)| (f.name(), a.clone())),
-                                )
-                                .unwrap(),
-                            );
+                            matches.extend(rows);
                         }
                         None => {
                             continue;
                         }
                     },
-                    JoinType::Left => todo!(),
+                    JoinType::Left => match maybe_matches {
+                        Some(rows) => {
+                        }
+                        None => {
+                            // add null rows
+                            continue;
+                        }
+                    }
                     JoinType::Right => todo!(),
                 }
             }
+            let gotted_cols = &build_row_converter
+                .convert_rows(matches.iter().map(|r| r.row()))
+                .unwrap()
+                .to_vec()[1..];
+            dbg!(&gotted_cols);
+            outputs.push(
+                RecordBatch::try_from_iter(
+                    self.schema
+                        .fields()
+                        .iter()
+                        .zip(batch.columns().iter().chain(gotted_cols.iter()))
+                        .map(|(f, a)| (f.name(), a.clone())),
+                )
+                .unwrap(),
+            )
         });
         Box::new(outputs.into_iter())
     }
 }
 
+impl From<PhysicalJoinPlan> for PhysicalPlan {
+    fn from(value: PhysicalJoinPlan) -> Self {
+        Self(Arc::new(PhysicalPlanKind::Join(value)))
+    }
+}
 impl std::fmt::Display for PhysicalJoinPlan {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(

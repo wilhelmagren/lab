@@ -18,6 +18,7 @@ pub enum LogicalPlanKind {
 #[derive(Clone)]
 pub struct LogicalPlan(Arc<LogicalPlanKind>);
 
+
 impl LogicalPlan {
     pub fn new(plan: LogicalPlanKind) -> Self {
         Self(Arc::new(plan))
@@ -393,10 +394,10 @@ impl std::fmt::Display for JoinKey {
 
 #[derive(Clone)]
 pub struct JoinPlan {
-    left: LogicalPlan,
-    right: LogicalPlan,
-    how: JoinType,
-    on: Vec<JoinKey>,
+    pub left: LogicalPlan,
+    pub right: LogicalPlan,
+    pub how: JoinType,
+    pub on: Vec<JoinKey>,
     schema: SchemaRef,
 }
 
@@ -444,7 +445,7 @@ impl JoinPlan {
         }
     }
 
-    fn schema(&self) -> &SchemaRef {
+    pub fn schema(&self) -> &SchemaRef {
         &self.schema
     }
 }

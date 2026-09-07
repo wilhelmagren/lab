@@ -12,7 +12,8 @@ use crate::{
             PhysicalExprKind, PhysicalLiteralExpr,
         },
         plan::{
-            PhysicalAggregatePlan, PhysicalFilterPlan, PhysicalJoinPlan, PhysicalLimitPlan, PhysicalPlan, PhysicalProjectionPlan, PhysicalScanPlan
+            PhysicalAggregatePlan, PhysicalFilterPlan, PhysicalJoinPlan, PhysicalLimitPlan,
+            PhysicalPlan, PhysicalProjectionPlan, PhysicalScanPlan,
         },
     },
 };
@@ -64,7 +65,22 @@ impl Planner {
                     .collect::<Vec<PhysicalExpr>>(),
             )
             .into(),
-            LogicalPlanKind::Join(plan) = PhysicalJoinPlan,
+            LogicalPlanKind::Join(plan) => {
+                // the join keys should be expressions instead??
+                let left = self.create_physical_plan(plan.left.clone());
+                let right = self.create_physical_plan(plan.right.clone());
+                let left_keys = plan
+                    .on
+                    .iter()
+                    .map(|k| plan.left.schema().index_of(&k.left).unwrap())
+                    .collect::<Vec<usize>>();
+                let right_keys = plan
+                    .on
+                    .iter()
+                    .map(|k| plan.right.schema().index_of(&k.right).unwrap())
+                    .collect::<Vec<usize>>();
+                PhysicalJoinPlan::new(left, right, plan.how.clone(), left_keys, right_keys).into()
+            }
         }
     }
 
