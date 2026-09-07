@@ -499,8 +499,8 @@ pub fn count(expr: LogicalExpr) -> LogicalExpr {
 
 #[derive(Clone)]
 pub struct AliasLogicalExpr {
-    expr: LogicalExpr,
-    name: String,
+    pub expr: LogicalExpr,
+    pub name: String,
 }
 
 impl AliasLogicalExpr {

@@ -115,8 +115,22 @@ impl Planner {
                 PhysicalExpr::new(PhysicalExprKind::Aggregate(PhysicalAggregateExpr {
                     op: expr.op.clone(),
                     expr: self.create_physical_expr(input, expr.expr.clone()),
+                    name: expr.to_string(),
                 }))
             }
+
+            LogicalExprKind::Alias(alias) => match alias.expr().kind() {
+                LogicalExprKind::Aggregate(agg) => {
+                    PhysicalExpr::new(PhysicalExprKind::Aggregate(PhysicalAggregateExpr {
+                        op: agg.op.clone(),
+                        expr: self.create_physical_expr(input, agg.expr.clone()),
+                        name: alias.name.to_owned(),
+                    }))
+                }
+
+                _ => panic!("expected aggregate inside alias"),
+            },
+
             _ => panic!("expected agg expr"),
         }
     }

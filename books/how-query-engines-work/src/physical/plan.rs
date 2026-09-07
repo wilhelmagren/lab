@@ -2,6 +2,8 @@ use std::collections::HashSet;
 use std::collections::hash_map::Entry;
 use std::{collections::HashMap, sync::Arc};
 
+use arrow::array::new_null_array;
+use arrow::compute::interleave_record_batch;
 use arrow::row::{Row, Rows};
 use arrow::{
     array::{ArrayRef, AsArray, BooleanArray, RecordBatch, downcast_array},
@@ -30,6 +32,9 @@ pub enum PhysicalPlanKind {
 
 #[derive(Clone)]
 pub struct PhysicalPlan(Arc<PhysicalPlanKind>);
+
+/// batch_idx, row_idx
+type RowPosition = (usize, usize);
 
 type HashAgg = HashMap<OwnedRow, Vec<Accumulator>>;
 
@@ -1293,6 +1298,14 @@ pub struct PhysicalJoinPlan {
 }
 
 impl PhysicalJoinPlan {
+    fn compute_duplicate_keys(l: &[usize], r: &[usize]) -> HashSet<usize> {
+        l.iter()
+            .zip(r.iter())
+            .filter(|(l, r)| l == r)
+            .map(|(l, _)| *l)
+            .collect::<HashSet<usize>>()
+    }
+
     pub fn new(
         left: PhysicalPlan,
         right: PhysicalPlan,
@@ -1300,12 +1313,7 @@ impl PhysicalJoinPlan {
         left_keys: Vec<usize>,
         right_keys: Vec<usize>,
     ) -> Self {
-        let duplicate_keys = left_keys
-            .iter()
-            .zip(right_keys.iter())
-            .filter(|(l, r)| l == r)
-            .map(|(l, _)| *l)
-            .collect::<HashSet<usize>>();
+        let duplicate_keys = PhysicalJoinPlan::compute_duplicate_keys(&left_keys, &right_keys);
 
         let fields = match how {
             // if it is a inner or left join, we take the keys in left relation
@@ -1354,6 +1362,190 @@ impl PhysicalJoinPlan {
     fn schema(&self) -> &SchemaRef {
         &self.schema
     }
+
+    pub fn execute(&self) -> RecordBatchIterator {
+        let duplicate_keys =
+            PhysicalJoinPlan::compute_duplicate_keys(&self.left_keys, &self.right_keys);
+
+        let key_sort_fields = self
+            .right_keys
+            .iter()
+            .map(|i| SortField::new(self.right.schema().fields()[*i].data_type().clone()))
+            .collect();
+
+        let key_converter = RowConverter::new(key_sort_fields).unwrap();
+
+        // BUILD PHASE
+        let mut right_batches = Vec::<RecordBatch>::new();
+        let mut hashtable = HashMap::<Vec<u8>, Vec<RowPosition>>::new();
+
+        // this is used to mark matches in the right join
+        let mut matched_right = Vec::<Vec<bool>>::new();
+
+        for batch in self.right.execute() {
+            let batch_idx = right_batches.len();
+            let key_batch = batch.project(&self.right_keys).unwrap();
+            let build_keys = key_converter.convert_columns(key_batch.columns()).unwrap();
+            // NULL = NULL is not true, a row containing NULL in an equi-join should
+            // not enter the build-side hash table
+            for (row_idx, key) in build_keys.iter().enumerate() {
+                if key_batch.columns().iter().any(|c| c.is_null(row_idx)) {
+                    continue;
+                };
+
+                hashtable
+                    .entry(key.as_ref().to_vec())
+                    .or_default()
+                    .push((batch_idx, row_idx));
+            }
+
+            matched_right.push(vec![false; batch.num_rows()]);
+            right_batches.push(batch);
+        }
+
+        let null_right_batch = RecordBatch::try_new(
+            self.right.schema().clone(),
+            self.right
+                .schema()
+                .fields()
+                .iter()
+                .map(|f| new_null_array(f.data_type(), 1))
+                .collect(),
+        )
+        .unwrap();
+
+        let null_right_batch_idx = right_batches.len();
+        let right_batch_refs = right_batches
+            .iter()
+            .chain(std::iter::once(&null_right_batch))
+            .collect::<Vec<_>>();
+
+        // PROBE PHASE
+        let mut outputs = Vec::<RecordBatch>::new();
+        for batch in self.left.execute() {
+            let key_batch = batch.project(&self.left_keys).unwrap();
+            let probe_keys = key_converter.convert_columns(key_batch.columns()).unwrap();
+            let mut lpos = Vec::<RowPosition>::new();
+            let mut rpos = Vec::<RowPosition>::new();
+            for (lridx, key) in probe_keys.iter().enumerate() {
+                let has_null_key = key_batch.columns().iter().any(|c| c.is_null(lridx));
+                let matches = if has_null_key {
+                    None
+                } else {
+                    hashtable.get::<[u8]>(key.as_ref())
+                };
+                match self.how {
+                    JoinType::Inner => {
+                        if let Some(matches) = matches {
+                            for &(rbidx, rridx) in matches {
+                                lpos.push((0, lridx));
+                                rpos.push((rbidx, rridx));
+                            }
+                        }
+                    }
+                    JoinType::Left => {
+                        if let Some(matches) = matches {
+                            for &(rbidx, rridx) in matches {
+                                lpos.push((0, lridx));
+                                rpos.push((rbidx, rridx));
+                            }
+                        } else {
+                            lpos.push((0, lridx));
+                            rpos.push((null_right_batch_idx, 0));
+                        }
+                    }
+                    JoinType::Right => {
+                        if let Some(matches) = matches {
+                            for &(rbidx, rridx) in matches {
+                                lpos.push((0, lridx));
+                                rpos.push((rbidx, rridx));
+                                matched_right[rbidx][rridx] = true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if lpos.is_empty() {
+                continue;
+            }
+
+            let joined_left = interleave_record_batch(&[&batch], &lpos).unwrap();
+            let joined_right = interleave_record_batch(&right_batch_refs, &rpos).unwrap();
+
+            outputs.push(self.create_output(&duplicate_keys, &joined_left, &joined_right));
+        }
+
+        // right join special handling
+        if matches!(self.how, JoinType::Right) {
+            let unmatched_right = matched_right
+                .iter()
+                .enumerate()
+                .flat_map(|(bidx, matched)| {
+                    matched
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, mmd)| !**mmd)
+                        .map(move |(ridx, _)| (bidx, ridx))
+                })
+                .collect::<Vec<RowPosition>>();
+            if !unmatched_right.is_empty() {
+                let unmatched_count = unmatched_right.len();
+                let joined_right =
+                    interleave_record_batch(&right_batch_refs, &unmatched_right).unwrap();
+
+                let null_left_batch = RecordBatch::try_new(
+                    self.left.schema().clone(),
+                    self.left
+                        .schema()
+                        .fields()
+                        .iter()
+                        .map(|f| new_null_array(f.data_type(), 1))
+                        .collect(),
+                )
+                .unwrap();
+
+                let nlpos = vec![(0usize, 0usize); unmatched_count];
+                let joined_left = interleave_record_batch(&[&null_left_batch], &nlpos).unwrap();
+                outputs.push(self.create_output(&duplicate_keys, &joined_left, &joined_right));
+            }
+        }
+
+        Box::new(outputs.into_iter())
+    }
+
+    fn create_output(
+        &self,
+        duplicate_keys: &HashSet<usize>,
+        lb: &RecordBatch,
+        rb: &RecordBatch,
+    ) -> RecordBatch {
+        let cols = match self.how {
+            JoinType::Inner | JoinType::Left => lb
+                .columns()
+                .iter()
+                .cloned()
+                .chain(
+                    rb.columns()
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| !duplicate_keys.contains(i))
+                        .map(|(_, col)| col.clone()),
+                )
+                .collect(),
+
+            JoinType::Right => lb
+                .columns()
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| !duplicate_keys.contains(i))
+                .map(|(_, col)| col.clone())
+                .chain(rb.columns().iter().cloned())
+                .collect(),
+        };
+        RecordBatch::try_new(self.schema.clone(), cols).unwrap()
+    }
+
     /// Join types:
     ///
     /// Inner join: returns rows where the join condition matches in both tables.
@@ -1418,7 +1610,7 @@ impl PhysicalJoinPlan {
     ///     - the smaller table fits in memory
     ///     - the join condition uses equality
     ///
-    pub fn execute(&self) -> RecordBatchIterator {
+    pub fn execute_old(&self) -> RecordBatchIterator {
         // build phase
         let mut hashtable: HashMap<OwnedRow, Vec<OwnedRow>> = HashMap::new();
         let build_key_sort_fields = self
@@ -1534,12 +1726,12 @@ impl PhysicalJoinPlan {
                     },
                     JoinType::Left => match maybe_matches {
                         Some(rows) => {
+                            matches.extend(rows);
                         }
                         None => {
-                            // add null rows
                             continue;
                         }
-                    }
+                    },
                     JoinType::Right => todo!(),
                 }
             }

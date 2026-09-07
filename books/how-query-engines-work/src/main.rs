@@ -13,15 +13,21 @@ use tqe::logical::plan::JoinType;
 fn main() {
     let ctx = SessionContext::new();
 
-    let df_a = ctx.parquet("./data/a.parquet");
-    let results: Vec<RecordBatch> = ctx.execute(&df_a).collect();
-    println!("{}", pretty_format_batches(&results).unwrap());
+    let df_users = ctx
+        .parquet("./data/users.parquet")
+        .filter(col("age").gteq(100i64));
+    let df_jobs = ctx.parquet("./data/jobs.parquet");
 
-    let df_b = ctx.parquet("./data/b.parquet");
-    let results: Vec<RecordBatch> = ctx.execute(&df_b).collect();
-    println!("{}", pretty_format_batches(&results).unwrap());
-
-    let df = df_a.join(&df_b, JoinType::Inner, vec![JoinKey::new("id", "id")]);
+    let df = df_users
+        .join(&df_jobs, JoinType::Left, vec![JoinKey::new("id", "id")])
+        .agg(
+            vec![col("id"), col("name")],
+            vec![
+                avg(col("salary")).alias("avg_salary"),
+                min(col("salary")).alias("min_salary"),
+                max(col("salary")).alias("max_salary"),
+            ],
+        );
     let results: Vec<RecordBatch> = ctx.execute(&df).collect();
     println!("{}", pretty_format_batches(&results).unwrap());
 }

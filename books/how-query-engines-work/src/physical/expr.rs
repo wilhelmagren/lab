@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
-use arrow::array::{
-    ArrayRef, BooleanArray, Datum, RecordBatch, Scalar, downcast_array,
-};
+use arrow::array::{ArrayRef, BooleanArray, Datum, RecordBatch, Scalar, downcast_array};
 use arrow::compute::kernels::boolean::{and, or};
 use arrow::compute::kernels::cmp::{eq, gt, gt_eq, lt, lt_eq, neq};
 use arrow::compute::kernels::numeric::{add, div, mul, rem, sub};
@@ -36,7 +34,10 @@ impl PhysicalExpr {
             PhysicalExprKind::Column(expr) => expr.to_field(input),
             PhysicalExprKind::Literal(expr) => expr.to_field(),
             PhysicalExprKind::Binary(expr) => expr.to_field(input),
-            PhysicalExprKind::Aggregate(expr) => expr.to_field(input),
+            PhysicalExprKind::Aggregate(expr) => {
+                let f = expr.expr.to_field(input);
+                Arc::new(f.as_ref().clone().with_name(expr.name.clone()))
+            }
         }
     }
 
@@ -95,7 +96,7 @@ impl PhysicalColumnExpr {
     }
 
     fn to_field(&self, input: &Schema) -> FieldRef {
-        input.fields().iter().nth(self.index).unwrap().clone()
+        Arc::new(input.field(self.index).clone())
     }
 
     fn evaluate(&self, batch: &RecordBatch) -> ColumnarValue {
@@ -243,6 +244,7 @@ impl From<PhysicalBinaryExpr> for PhysicalExpr {
 pub struct PhysicalAggregateExpr {
     pub op: AggregateOp,
     pub expr: PhysicalExpr,
+    pub name: String,
 }
 
 impl PhysicalAggregateExpr {
