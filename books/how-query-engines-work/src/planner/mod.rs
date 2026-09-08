@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::{
     data_source::registry::SourceRegistry,
     logical::{
-        expr::{LogicalExpr, LogicalExprKind},
+        expr::{LogicalExpr, LogicalExprKind, Ordering},
         plan::{LogicalPlan, LogicalPlanKind},
     },
     physical::{
@@ -13,7 +13,7 @@ use crate::{
         },
         plan::{
             PhysicalAggregatePlan, PhysicalFilterPlan, PhysicalJoinPlan, PhysicalLimitPlan,
-            PhysicalPlan, PhysicalProjectionPlan, PhysicalScanPlan,
+            PhysicalPlan, PhysicalProjectionPlan, PhysicalScanPlan, PhysicalSortPlan,
         },
     },
 };
@@ -80,6 +80,21 @@ impl Planner {
                     .map(|k| plan.right.schema().index_of(&k.right).unwrap())
                     .collect::<Vec<usize>>();
                 PhysicalJoinPlan::new(left, right, plan.how.clone(), left_keys, right_keys).into()
+            }
+            LogicalPlanKind::Sort(plan) => {
+                let bys = plan
+                    .by
+                    .iter()
+                    .map(|e| match e.kind() {
+                        LogicalExprKind::Order(e) => (
+                            e.order.clone(),
+                            self.create_physical_expr(input.clone(), e.expr.clone()),
+                        ),
+                        _ => panic!("expected ordering expression!"),
+                    })
+                    .collect::<Vec<(Ordering, PhysicalExpr)>>();
+
+                PhysicalSortPlan::new(self.create_physical_plan(plan.input.clone()), bys).into()
             }
         }
     }

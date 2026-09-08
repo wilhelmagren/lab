@@ -12,6 +12,7 @@ use arrow::{
     row::{OwnedRow, RowConverter, SortField},
 };
 
+use crate::logical::expr::Ordering;
 use crate::logical::plan::{JoinKey, JoinType};
 use crate::{
     data_source::{DataSourceRef, RecordBatchIterator},
@@ -21,6 +22,53 @@ use crate::{
 };
 
 #[derive(Clone)]
+pub struct PhysicalSortPlan {
+    input: PhysicalPlan,
+    schema: SchemaRef,
+    by: Vec<(Ordering, PhysicalExpr)>,
+}
+
+impl PhysicalSortPlan {
+    pub fn new(input: PhysicalPlan, by: Vec<(Ordering, PhysicalExpr)>) -> Self {
+        let schema = input.schema().clone();
+        Self { input, schema, by }
+    }
+
+    fn execute(&self) -> RecordBatchIterator {
+        let batches = self.input.execute();
+        todo!()
+    }
+
+    fn schema(&self) -> &SchemaRef {
+        &self.schema
+    }
+
+    fn input(&self) -> &PhysicalPlan {
+        &self.input
+    }
+}
+
+impl From<PhysicalSortPlan> for PhysicalPlan {
+    fn from(value: PhysicalSortPlan) -> Self {
+        Self(Arc::new(PhysicalPlanKind::Sort(value)))
+    }
+}
+
+impl std::fmt::Display for PhysicalSortPlan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "SortExec: by=[{}]",
+            self.by
+                .iter()
+                .map(|(o, e)| format!("{}({})", o, e))
+                .collect::<Vec<String>>()
+                .join(", ")
+        )
+    }
+}
+
+#[derive(Clone)]
 pub enum PhysicalPlanKind {
     Limit(PhysicalLimitPlan),
     Scan(PhysicalScanPlan),
@@ -28,6 +76,7 @@ pub enum PhysicalPlanKind {
     Projection(PhysicalProjectionPlan),
     Aggregate(PhysicalAggregatePlan),
     Join(PhysicalJoinPlan),
+    Sort(PhysicalSortPlan),
 }
 
 #[derive(Clone)]
@@ -65,6 +114,7 @@ impl PhysicalPlan {
             PhysicalPlanKind::Projection(plan) => plan.schema(),
             PhysicalPlanKind::Aggregate(plan) => plan.schema(),
             PhysicalPlanKind::Join(plan) => plan.schema(),
+            PhysicalPlanKind::Sort(plan) => plan.schema(),
         }
     }
 
@@ -76,6 +126,7 @@ impl PhysicalPlan {
             PhysicalPlanKind::Projection(plan) => vec![plan.input()],
             PhysicalPlanKind::Aggregate(plan) => vec![plan.input()],
             PhysicalPlanKind::Join(plan) => vec![&plan.left, &plan.right],
+            PhysicalPlanKind::Sort(plan) => vec![plan.input()],
         }
     }
 
@@ -87,6 +138,7 @@ impl PhysicalPlan {
             PhysicalPlanKind::Projection(plan) => plan.execute(),
             PhysicalPlanKind::Aggregate(plan) => plan.execute(),
             PhysicalPlanKind::Join(plan) => plan.execute(),
+            PhysicalPlanKind::Sort(plan) => plan.execute(),
         }
     }
 
@@ -114,6 +166,7 @@ impl std::fmt::Display for PhysicalPlan {
             PhysicalPlanKind::Projection(plan) => plan.fmt(f),
             PhysicalPlanKind::Aggregate(plan) => plan.fmt(f),
             PhysicalPlanKind::Join(plan) => plan.fmt(f),
+            PhysicalPlanKind::Sort(plan) => plan.fmt(f),
         }
     }
 }

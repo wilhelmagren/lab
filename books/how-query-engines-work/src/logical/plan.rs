@@ -13,11 +13,43 @@ pub enum LogicalPlanKind {
     Projection(ProjectionPlan),
     Aggregate(AggregatePlan),
     Join(JoinPlan),
+    Sort(SortPlan),
+}
+
+#[derive(Clone)]
+pub struct SortPlan {
+    pub input: LogicalPlan,
+    pub schema: SchemaRef,
+    pub by: Vec<LogicalExpr>,
+}
+
+impl SortPlan {
+    pub fn new(input: LogicalPlan, by: Vec<LogicalExpr>) -> Self {
+        let schema = input.schema().clone();
+        Self { input, schema, by }
+    }
+
+    pub fn schema(&self) -> &SchemaRef {
+        &self.schema
+    }
+}
+
+impl std::fmt::Display for SortPlan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Sort: by=[{}]",
+            self.by
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<String>>()
+                .join(", ")
+        )
+    }
 }
 
 #[derive(Clone)]
 pub struct LogicalPlan(Arc<LogicalPlanKind>);
-
 
 impl LogicalPlan {
     pub fn new(plan: LogicalPlanKind) -> Self {
@@ -26,6 +58,10 @@ impl LogicalPlan {
 
     pub fn limit(self, limit: usize) -> Self {
         Self::new(LogicalPlanKind::Limit(LimitPlan::new(self, limit)))
+    }
+
+    pub fn sort(self, by: Vec<LogicalExpr>) -> Self {
+        Self::new(LogicalPlanKind::Sort(SortPlan::new(self, by)))
     }
 
     pub fn scan(source_id: SourceId, source_name: impl Into<String>, schema: SchemaRef) -> Self {
@@ -71,6 +107,7 @@ impl LogicalPlan {
             LogicalPlanKind::Projection(pp) => pp.schema(),
             LogicalPlanKind::Aggregate(ap) => ap.schema(),
             LogicalPlanKind::Join(jp) => jp.schema(),
+            LogicalPlanKind::Sort(sp) => sp.schema(),
         }
     }
 
@@ -82,6 +119,7 @@ impl LogicalPlan {
             LogicalPlanKind::Projection(pp) => vec![&pp.input],
             LogicalPlanKind::Aggregate(ap) => vec![&ap.input],
             LogicalPlanKind::Join(jp) => vec![&jp.left, &jp.right],
+            LogicalPlanKind::Sort(sp) => vec![&sp.input],
         }
     }
 
@@ -111,6 +149,7 @@ impl std::fmt::Display for LogicalPlan {
             LogicalPlanKind::Projection(plan) => plan.fmt(f),
             LogicalPlanKind::Aggregate(plan) => plan.fmt(f),
             LogicalPlanKind::Join(plan) => plan.fmt(f),
+            LogicalPlanKind::Sort(plan) => plan.fmt(f),
         }
     }
 }

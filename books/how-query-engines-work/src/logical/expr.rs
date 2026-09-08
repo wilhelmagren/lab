@@ -11,6 +11,7 @@ pub enum LogicalExprKind {
     Binary(BinaryLogicalExpr),
     Aggregate(AggregateLogicalExpr),
     Alias(AliasLogicalExpr),
+    Order(OrderLogicalExpr),
 }
 
 #[derive(Clone)]
@@ -32,6 +33,7 @@ impl LogicalExpr {
             LogicalExprKind::Binary(expr) => expr.to_field(input),
             LogicalExprKind::Aggregate(expr) => expr.to_field(input),
             LogicalExprKind::Alias(expr) => expr.to_field(input),
+            LogicalExprKind::Order(expr) => expr.to_field(input),
         }
     }
 
@@ -80,6 +82,7 @@ impl std::fmt::Display for LogicalExpr {
             LogicalExprKind::Binary(expr) => expr.fmt(f),
             LogicalExprKind::Aggregate(expr) => expr.fmt(f),
             LogicalExprKind::Alias(expr) => expr.fmt(f),
+            LogicalExprKind::Order(expr) => expr.fmt(f),
         }
     }
 }
@@ -528,5 +531,57 @@ pub fn alias(expr: LogicalExpr, name: impl Into<String>) -> LogicalExpr {
     LogicalExpr::new(LogicalExprKind::Alias(AliasLogicalExpr {
         expr,
         name: name.into(),
+    }))
+}
+
+#[derive(Clone)]
+pub enum Ordering {
+    Asc,
+    Desc,
+}
+
+impl std::fmt::Display for Ordering {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Asc => write!(f, "Asc"),
+            Self::Desc => write!(f, "Desc"),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct OrderLogicalExpr {
+    pub expr: LogicalExpr,
+    pub order: Ordering,
+}
+
+impl std::fmt::Display for OrderLogicalExpr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}({})", self.order, self.expr)
+    }
+}
+
+impl OrderLogicalExpr {
+    pub fn to_field(&self, input: &Schema) -> FieldRef {
+        let f = self.expr.to_field(input);
+        Arc::new(Field::new(
+            self.to_string(),
+            f.data_type().clone(),
+            f.is_nullable(),
+        ))
+    }
+}
+
+pub fn asc(expr: LogicalExpr) -> LogicalExpr {
+    LogicalExpr::new(LogicalExprKind::Order(OrderLogicalExpr {
+        expr,
+        order: Ordering::Asc,
+    }))
+}
+
+pub fn desc(expr: LogicalExpr) -> LogicalExpr {
+    LogicalExpr::new(LogicalExprKind::Order(OrderLogicalExpr {
+        expr,
+        order: Ordering::Desc,
     }))
 }

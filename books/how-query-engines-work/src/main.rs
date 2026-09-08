@@ -2,8 +2,10 @@ use arrow::array::RecordBatch;
 use arrow::util::pretty::pretty_format_batches;
 
 use tqe::context::SessionContext;
+use tqe::logical::expr::asc;
 use tqe::logical::expr::avg;
 use tqe::logical::expr::col;
+use tqe::logical::expr::desc;
 use tqe::logical::expr::max;
 use tqe::logical::expr::min;
 use tqe::logical::plan::JoinKey;
@@ -19,7 +21,7 @@ fn main() {
     let df_jobs = ctx.parquet("./data/jobs.parquet");
 
     let df = df_users
-        .join(&df_jobs, JoinType::Inner, vec![JoinKey::new("id", "id")])
+        .join(&df_jobs, JoinType::Right, vec![JoinKey::new("id", "id")])
         .agg(
             vec![col("id"), col("name")],
             vec![
@@ -28,6 +30,7 @@ fn main() {
                 max(col("salary")).alias("max_salary"),
             ],
         )
+        .sort(vec![asc(col("name")), desc(col("avg_salary"))])
         .limit(10);
 
     // everything is lazy, nothing runs until we do .collect() below...

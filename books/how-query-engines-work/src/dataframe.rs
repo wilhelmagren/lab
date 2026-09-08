@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::data_source::registry::SourceRegistry;
-use crate::logical::expr::LogicalExpr;
+use crate::logical::expr::{ColumnLogicalExpr, LogicalExpr};
 use crate::logical::plan::{JoinKey, JoinType, LogicalPlan};
 
 pub struct DataFrame {
@@ -19,6 +19,10 @@ impl DataFrame {
             plan,
             sources: self.sources.clone(),
         }
+    }
+
+    pub fn sort(&self, by: Vec<LogicalExpr>) -> Self {
+        self.with_plan(self.plan.clone().sort(by))
     }
 
     pub fn limit(&self, limit: usize) -> Self {
