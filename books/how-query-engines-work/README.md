@@ -7,6 +7,7 @@ It is a pull-based, vectorized, (sometimes) streaming, query engine written in R
 - https://howqueryengineswork.com/00-introduction.html
 - https://github.com/andygrove/how-query-engines-work
 - https://freddygabbay.github.io/AGPC-ISCA2025/Accelerating%20Hash%20Aggregate%20for%20Big%20Data%20Analytics.pdf
+- http://wwwlgis.informatik.uni-kl.de/archiv/wwwdvs.informatik.uni-kl.de/courses/DBSREAL/SS2005/Vorlesungsunterlagen/Implementing_Sorting.pdf
 
 **NO AI ALLOWED HERE, GO AWAY MR CLADUE**
 

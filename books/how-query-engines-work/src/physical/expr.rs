@@ -87,7 +87,7 @@ impl ColumnarValue {
 /// Reference a column (field) in a batch by index.
 #[derive(Clone, Debug)]
 pub struct PhysicalColumnExpr {
-    index: usize,
+    pub index: usize,
 }
 
 impl PhysicalColumnExpr {

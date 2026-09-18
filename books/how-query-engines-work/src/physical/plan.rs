@@ -3,7 +3,10 @@ use std::collections::hash_map::Entry;
 use std::{collections::HashMap, sync::Arc};
 
 use arrow::array::new_null_array;
-use arrow::compute::interleave_record_batch;
+use arrow::compute::kernels::sort::lexsort_to_indices;
+use arrow::compute::{
+    SortColumn, SortOptions, concat_batches, interleave_record_batch, lexsort, take_record_batch,
+};
 use arrow::row::{Row, Rows};
 use arrow::{
     array::{ArrayRef, AsArray, BooleanArray, RecordBatch, downcast_array},
@@ -25,18 +28,37 @@ use crate::{
 pub struct PhysicalSortPlan {
     input: PhysicalPlan,
     schema: SchemaRef,
-    by: Vec<(Ordering, PhysicalExpr)>,
+    by: Vec<(Ordering, usize)>,
 }
 
 impl PhysicalSortPlan {
-    pub fn new(input: PhysicalPlan, by: Vec<(Ordering, PhysicalExpr)>) -> Self {
+    pub fn new(input: PhysicalPlan, by: Vec<(Ordering, usize)>) -> Self {
         let schema = input.schema().clone();
         Self { input, schema, by }
     }
 
     fn execute(&self) -> RecordBatchIterator {
-        let batches = self.input.execute();
-        todo!()
+        let batches = self
+            .input
+            .execute()
+            .into_iter()
+            .collect::<Vec<RecordBatch>>();
+        let big_batch = concat_batches(&self.schema, batches.iter()).unwrap();
+        let sort_cols = self
+            .by
+            .iter()
+            .map(|(ord, idx)| {
+                let (desc, nulls_first) = ord.get_parts();
+                SortColumn {
+                    values: big_batch.column(*idx).clone(),
+                    options: Some(SortOptions::new(desc, nulls_first)),
+                }
+            })
+            .collect::<Vec<SortColumn>>();
+
+        // maybe really fucking expensive...
+        let indices = lexsort_to_indices(&sort_cols, None).unwrap();
+        Box::new(vec![take_record_batch(&big_batch, &indices).unwrap()].into_iter())
     }
 
     fn schema(&self) -> &SchemaRef {
@@ -61,7 +83,7 @@ impl std::fmt::Display for PhysicalSortPlan {
             "SortExec: by=[{}]",
             self.by
                 .iter()
-                .map(|(o, e)| format!("{}({})", o, e))
+                .map(|(o, e)| format!("{}(#{})", o, e))
                 .collect::<Vec<String>>()
                 .join(", ")
         )

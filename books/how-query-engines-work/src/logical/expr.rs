@@ -540,6 +540,16 @@ pub enum Ordering {
     Desc,
 }
 
+impl Ordering {
+    pub fn get_parts(&self) -> (bool, bool) {
+        match self {
+            // default is nulls last, so second argument is false
+            Ordering::Asc => (false, false),
+            Ordering::Desc => (true, false),
+        }
+    }
+}
+
 impl std::fmt::Display for Ordering {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

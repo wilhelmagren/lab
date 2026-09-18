@@ -85,14 +85,21 @@ impl Planner {
                 let bys = plan
                     .by
                     .iter()
-                    .map(|e| match e.kind() {
-                        LogicalExprKind::Order(e) => (
-                            e.order.clone(),
-                            self.create_physical_expr(input.clone(), e.expr.clone()),
-                        ),
-                        _ => panic!("expected ordering expression!"),
+                    .map(|expr| {
+                        let (ord, physical_expr) = match expr.kind() {
+                            LogicalExprKind::Order(e) => (
+                                e.order.clone(),
+                                self.create_physical_expr(input.clone(), e.expr.clone()),
+                            ),
+                            _ => panic!("expected ordering expression!"),
+                        };
+
+                        match physical_expr.kind() {
+                            PhysicalExprKind::Column(expr) => (ord, expr.index),
+                            _ => panic!("expected column expression!"),
+                        }
                     })
-                    .collect::<Vec<(Ordering, PhysicalExpr)>>();
+                    .collect::<Vec<(Ordering, usize)>>();
 
                 PhysicalSortPlan::new(self.create_physical_plan(plan.input.clone()), bys).into()
             }
