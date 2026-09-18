@@ -5,9 +5,8 @@ use std::{collections::HashMap, sync::Arc};
 use arrow::array::new_null_array;
 use arrow::compute::kernels::sort::lexsort_to_indices;
 use arrow::compute::{
-    SortColumn, SortOptions, concat_batches, interleave_record_batch, lexsort, take_record_batch,
+    SortColumn, SortOptions, concat_batches, interleave_record_batch, take_record_batch,
 };
-use arrow::row::{Row, Rows};
 use arrow::{
     array::{ArrayRef, AsArray, BooleanArray, RecordBatch, downcast_array},
     compute::{concat, filter_record_batch, min},
@@ -16,7 +15,7 @@ use arrow::{
 };
 
 use crate::logical::expr::Ordering;
-use crate::logical::plan::{JoinKey, JoinType};
+use crate::logical::plan::JoinType;
 use crate::{
     data_source::{DataSourceRef, RecordBatchIterator},
     logical::expr::AggregateOp,
@@ -524,6 +523,7 @@ pub enum AccumulatorKind {
     Max(MaxAccumulator),
     Sum(SumAccumulator),
     Avg(AvgAccumulator),
+    Count(CountAccumulator),
 }
 
 #[derive(Clone, Debug)]
@@ -540,6 +540,7 @@ impl Accumulator {
             AccumulatorKind::Max(acc) => acc.accumulate_row(values, row),
             AccumulatorKind::Sum(acc) => acc.accumulate_row(values, row),
             AccumulatorKind::Avg(acc) => acc.accumulate_row(values, row),
+            AccumulatorKind::Count(acc) => acc.accumulate_row(),
         }
     }
 
@@ -558,6 +559,9 @@ impl Accumulator {
             (AccumulatorKind::Avg(left), AccumulatorKind::Avg(right)) => {
                 left.merge(right);
             }
+            (AccumulatorKind::Count(left), AccumulatorKind::Count(right)) => {
+                left.merge(right);
+            }
             _ => unreachable!("cannot merge different acc kinds"),
         }
     }
@@ -568,6 +572,7 @@ impl Accumulator {
             AccumulatorKind::Max(acc) => acc.final_value(),
             AccumulatorKind::Sum(acc) => acc.final_value(),
             AccumulatorKind::Avg(acc) => acc.final_value(),
+            AccumulatorKind::Count(acc) => acc.final_value(),
         }
     }
 }
@@ -595,6 +600,11 @@ impl From<SumAccumulator> for Accumulator {
 impl From<AvgAccumulator> for Accumulator {
     fn from(value: AvgAccumulator) -> Self {
         Self(AccumulatorKind::Avg(value))
+    }
+}
+impl From<CountAccumulator> for Accumulator {
+    fn from(value: CountAccumulator) -> Self {
+        Self(AccumulatorKind::Count(value))
     }
 }
 
@@ -807,18 +817,6 @@ impl MinAccumulator {
             },
         }
     }
-
-    fn update(&mut self, value: &ScalarValue) {
-        match &self.value {
-            ScalarValue::Null => {
-                self.value = value.clone();
-            }
-            current if value < current => {
-                self.value = value.clone();
-            }
-            _ => {}
-        }
-    }
 }
 
 /// value is accumulated sum and count is number of rows for the group
@@ -959,6 +957,39 @@ impl AvgAccumulator {
         }
     }
 }
+
+#[derive(Clone, Debug)]
+pub struct CountAccumulator {
+    pub count: usize,
+}
+
+impl CountAccumulator {
+    /// Creates a new [`CountAccumulator`].
+    pub fn new() -> Self {
+        Self { count: 0 }
+    }
+
+    /// Returns the accumulate row of this [`CountAccumulator`].
+    pub fn accumulate_row(&mut self) {
+        self.count += 1;
+    }
+
+    /// Returns the final value of this [`CountAccumulator`].
+    pub fn final_value(&self) -> ScalarValue {
+        ScalarValue::UInt64(self.count as u64)
+    }
+
+    pub fn merge(&mut self, other: &CountAccumulator) {
+        self.count += other.count;
+    }
+}
+
+impl Default for CountAccumulator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct SumAccumulator {
     pub value: ScalarValue,
@@ -1075,10 +1106,6 @@ impl SumAccumulator {
             // i only support f64 right now
             _ => todo!(),
         }
-    }
-
-    fn update(&mut self, value: ScalarValue) {
-        todo!()
     }
 }
 
@@ -1263,7 +1290,7 @@ impl PhysicalAggregatePlan {
                                 AggregateOp::Max => MaxAccumulator::new().into(),
                                 AggregateOp::Sum => SumAccumulator::new().into(),
                                 AggregateOp::Avg => AvgAccumulator::new().into(),
-                                _ => unreachable!(),
+                                AggregateOp::Count => CountAccumulator::new().into(),
                             };
                             // dbg!(&agg.op);
                             // dbg!(&acc);

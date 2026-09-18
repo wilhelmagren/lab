@@ -4,7 +4,7 @@ use arrow::array::{ArrayRef, BooleanArray, Datum, RecordBatch, Scalar, downcast_
 use arrow::compute::kernels::boolean::{and, or};
 use arrow::compute::kernels::cmp::{eq, gt, gt_eq, lt, lt_eq, neq};
 use arrow::compute::kernels::numeric::{add, div, mul, rem, sub};
-use arrow::datatypes::{Field, FieldRef, Schema};
+use arrow::datatypes::{DataType, Field, FieldRef, Schema};
 use arrow::util::display::array_value_to_string;
 
 use crate::logical::expr::{AggregateOp, BinaryOp};
@@ -36,7 +36,15 @@ impl PhysicalExpr {
             PhysicalExprKind::Binary(expr) => expr.to_field(input),
             PhysicalExprKind::Aggregate(expr) => {
                 let f = expr.expr.to_field(input);
-                Arc::new(f.as_ref().clone().with_name(expr.name.clone()))
+                if matches!(expr.op, AggregateOp::Count) {
+                    Arc::new(Field::new(
+                        expr.name.to_string(),
+                        DataType::UInt64,
+                        f.is_nullable(),
+                    ))
+                } else {
+                    Arc::new(f.as_ref().clone().with_name(expr.name.clone()))
+                }
             }
         }
     }
@@ -245,12 +253,6 @@ pub struct PhysicalAggregateExpr {
     pub op: AggregateOp,
     pub expr: PhysicalExpr,
     pub name: String,
-}
-
-impl PhysicalAggregateExpr {
-    fn to_field(&self, input: &Schema) -> FieldRef {
-        self.expr.to_field(input)
-    }
 }
 
 impl std::fmt::Display for PhysicalAggregateExpr {
