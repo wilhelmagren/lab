@@ -1,10 +1,7 @@
 use bytes::Bytes;
 use wasm_bindgen::prelude::*;
 
-use arrow::{
-    array::RecordBatch,
-    util::pretty::pretty_format_batches,
-};
+use arrow::{array::RecordBatch, util::pretty::pretty_format_batches};
 
 use crate::{
     context::SessionContext,
@@ -18,10 +15,7 @@ pub fn run_demo(parquet: &[u8]) -> Result<String, JsValue> {
     let ctx = SessionContext::new();
 
     let df = ctx
-        .parquet_bytes(
-            "weather_stations",
-            Bytes::copy_from_slice(parquet),
-        )
+        .parquet_bytes("weather_stations", Bytes::copy_from_slice(parquet))
         .agg(
             vec![col("station_name")],
             vec![
@@ -31,8 +25,7 @@ pub fn run_demo(parquet: &[u8]) -> Result<String, JsValue> {
             ],
         );
 
-    let results: Vec<RecordBatch> =
-        ctx.execute(&df).collect();
+    let results: Vec<RecordBatch> = ctx.execute(&df).collect();
 
     pretty_format_batches(&results)
         .map(|x| x.to_string())
