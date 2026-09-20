@@ -5,8 +5,8 @@ use crate::{
     dataframe::DataFrame,
     logical::{
         expr::{
-            LogicalExpr, LogicalExprKind, alias, and, avg, col, col_idx, eq, gt, gteq, lt, lteq,
-            max, min, neq, or, sum,
+            LogicalExpr, LogicalExprKind, Ordering, alias, and, asc, avg, col, col_idx, desc, eq,
+            gt, gteq, lit, lt, lteq, max, min, neq, or, sum,
         },
         plan::LogicalPlan,
     },
@@ -45,6 +45,7 @@ pub enum TokenType {
     Group,
     Order,
     By,
+    Having,
     Asc,
     Desc,
     Explain,
@@ -67,6 +68,10 @@ pub enum TokenType {
 
     // referencing table or column
     Identifier,
+
+    // literals
+    Number,
+    String,
 }
 
 impl From<&[char]> for TokenType {
@@ -110,6 +115,7 @@ impl From<&[char]> for TokenType {
             "group" => TokenType::Group,
             "order" => TokenType::Order,
             "by" => TokenType::By,
+            "having" => TokenType::Having,
             "asc" => TokenType::Asc,
             "desc" => TokenType::Desc,
             "explain" => TokenType::Explain,
@@ -171,6 +177,7 @@ impl From<&str> for TokenType {
             "group" => TokenType::Group,
             "order" => TokenType::Order,
             "by" => TokenType::By,
+            "having" => TokenType::Having,
             "asc" => TokenType::Asc,
             "desc" => TokenType::Desc,
             "explain" => TokenType::Explain,
@@ -241,6 +248,44 @@ impl<'a> Scanner<'a> {
         }
     }
 
+    fn scan_number(&mut self) {
+        while self.is_digit(self.peek()) {
+            self.r += 1;
+        }
+
+        // Optional decimal part:
+        // 123.45
+        if self.peek() == '.' && self.is_digit(self.peek_next()) {
+            self.r += 1; // consume '.'
+
+            while self.is_digit(self.peek()) {
+                self.r += 1;
+            }
+        }
+
+        self.add_token(TokenType::Number);
+    }
+
+    fn scan_string(&mut self) {
+        while !self.is_at_end() {
+            if self.peek() == '\'' {
+                if self.peek_next() == '\'' {
+                    self.r += 2;
+                    continue;
+                }
+
+                // closing quote
+                self.r += 1;
+                self.add_token(TokenType::String);
+                return;
+            }
+
+            self.r += 1;
+        }
+
+        panic!("Unterminated string literal");
+    }
+
     fn is_at_end(&self) -> bool {
         self.r >= self.source.len()
     }
@@ -279,9 +324,10 @@ impl<'a> Scanner<'a> {
     }
 
     fn is_next_char(&mut self, expected: char) -> bool {
-        if self.source[self.r] != expected {
+        if self.is_at_end() || self.source[self.r] != expected {
             return false;
         };
+
         self.r += 1;
         true
     }
@@ -302,6 +348,7 @@ impl<'a> Scanner<'a> {
                 '+' => self.add_token(TokenType::Plus),
                 '*' => self.add_token(TokenType::Star),
                 '=' => self.add_token(TokenType::Eq),
+                '/' => self.add_token(TokenType::Slash),
                 '!' => {
                     let tt = match self.is_next_char('=') {
                         true => TokenType::Neq,
@@ -325,9 +372,9 @@ impl<'a> Scanner<'a> {
                 }
                 // nop
                 ' ' | '\r' | '\t' => {}
-                '\n' => {
-                    line += 1;
-                }
+                '\n' => line += 1,
+                '\'' => self.scan_string(),
+                '0'..='9' => self.scan_number(),
                 'A'..='Z' | 'a'..='z' | '_' => {
                     while self.is_alpha_numeric(self.peek()) {
                         self.r += 1;
@@ -355,6 +402,19 @@ pub enum SqlExprKind {
     Select(SqlSelect),
     Sort(SqlSort),
     Function(SqlFunction),
+    Literal(SqlLiteral),
+}
+
+#[derive(Clone, Debug)]
+pub enum SqlLiteral {
+    Number(f64),
+    String(String),
+}
+
+impl Into<SqlExpr> for SqlLiteral {
+    fn into(self) -> SqlExpr {
+        SqlExpr(Arc::new(SqlExprKind::Literal(self)))
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -540,7 +600,6 @@ impl SqlExpr {
         self.0.as_ref()
     }
 
-    // this is the logical plan
     pub fn as_dataframe(&self, sources: Arc<SourceRegistry>) -> DataFrame {
         let select = match self.kind() {
             SqlExprKind::Select(select) => select.clone(),
@@ -559,80 +618,51 @@ impl SqlExpr {
         let mut plan = DataFrame::new(
             LogicalPlan::scan(
                 table_id,
-                select.clone().table_name,
+                select.table_name.clone(),
                 data_source.schema().clone(),
             ),
             sources.clone(),
         );
 
-        let projection_expr = select
-            .clone()
-            .projection
-            .into_iter()
-            .map(|e| self.create_logical_expr(e, plan.clone()))
-            .collect::<Vec<LogicalExpr>>();
-        let aggexprcount: u8 = projection_expr
-            .iter()
-            .map(|e| self.is_agg_expr(e.clone()))
-            .sum();
+        // SQL: WHERE happens before SELECT / GROUP BY.
+        if let Some(predicate) = select.predicate.clone() {
+            let predicate = self.create_logical_expr(predicate, plan.clone());
+            plan = plan.filter(predicate);
+        }
 
-        if aggexprcount == 0 && select.clone().group_by.map(|v| v.len()).unwrap_or(0) > 0 {
+        let projection_exprs = select
+            .projection
+            .iter()
+            .cloned()
+            .map(|expr| self.create_logical_expr(expr, plan.clone()))
+            .collect::<Vec<_>>();
+
+        let has_aggregate = projection_exprs.iter().any(|expr| self.is_agg_expr(expr));
+
+        let has_group_by = select
+            .group_by
+            .as_ref()
+            .is_some_and(|exprs| !exprs.is_empty());
+
+        if has_group_by && !has_aggregate {
             panic!("GROUP BY without aggregate expressions is not supported");
         }
 
-        let colnames_in_proj = self.get_referenced_cols(projection_expr.clone());
-        let colnames_in_pred = self.get_cols_referenced_by_predicate(select.clone(), plan.clone());
-
-        if aggexprcount == 0 {
-            return self.create_non_agg_query(
-                select,
-                plan,
-                projection_expr,
-                colnames_in_pred,
-                colnames_in_proj,
-            );
+        if has_aggregate {
+            plan = self.plan_aggregate_query(&select, plan, projection_exprs);
+        } else {
+            plan = plan.project(projection_exprs);
         }
 
-        let mut proj = Vec::new();
-        let mut aggs = Vec::new();
+        // Keep this where it is for now if HAVING is intended to reference
+        // projected/group aliases.
+        if let Some(having) = select.having.clone() {
+            let having = self.create_logical_expr(having, plan.clone());
+            plan = plan.filter(having);
+        }
 
-        let ngroupcols = select.clone().group_by.map(|v| v.len()).unwrap_or(0);
-        let mut groupcount = 0;
-
-        projection_expr.iter().for_each(|e| {
-            match e.kind() {
-                LogicalExprKind::Aggregate(_) => {
-                    proj.push(col_idx(ngroupcols + aggs.len()));
-                    aggs.push(e.clone());
-                }
-                LogicalExprKind::Alias(aliase) => {
-                    let innerxp = aliase.expr.clone();
-                    if !matches!(innerxp.kind(), LogicalExprKind::Aggregate(_)) {
-                        panic!(
-                            "Alias in aggregate query must wrap an aggregate expression, found: {}",
-                            innerxp
-                        );
-                    };
-                    proj.push(alias(col_idx(ngroupcols + aggs.len()), aliase.name.clone()));
-                    aggs.push(innerxp);
-                }
-                _ => {
-                    proj.push(col_idx(groupcount));
-                    groupcount += 1;
-                }
-            };
-        });
-
-        plan = self.plan_aggregate_query(
-            projection_expr,
-            select.clone(),
-            colnames_in_pred,
-            plan,
-            aggs,
-        );
-        plan = plan.project(proj);
-        if let Some(having) = select.having {
-            plan = plan.filter(self.create_logical_expr(having, plan.clone()));
+        if let Some(order_by) = select.order_by.clone() {
+            plan = self.plan_order_by(plan, order_by);
         }
 
         if let Some(limit) = select.limit {
@@ -642,53 +672,84 @@ impl SqlExpr {
         plan
     }
 
+    fn plan_order_by(&self, plan: DataFrame, order_by: Vec<SqlExpr>) -> DataFrame {
+        let order_exprs = order_by
+            .into_iter()
+            .map(|expr| {
+                let SqlExprKind::Sort(sort) = expr.kind() else {
+                    unreachable!("parse_order must produce SqlSort")
+                };
+
+                let expr = self.create_logical_expr(sort.expr.clone(), plan.clone());
+                if sort.asc { asc(expr) } else { desc(expr) }
+            })
+            .collect();
+
+        plan.sort(order_exprs)
+    }
+
     fn plan_aggregate_query(
         &self,
-        proj_exprs: Vec<LogicalExpr>,
-        select: SqlSelect,
-        colnames_in_pred: HashSet<String>,
-        df: DataFrame,
-        agg_exprs: Vec<LogicalExpr>,
+        select: &SqlSelect,
+        mut plan: DataFrame,
+        projection_exprs: Vec<LogicalExpr>,
     ) -> DataFrame {
-        let mut plan = df;
-        let projwithoutaggs = proj_exprs
-            .into_iter()
-            .filter(|e| self.is_agg_expr(e.clone()) == 0)
-            .collect::<Vec<LogicalExpr>>();
-
-        let colnames_in_agg = self.get_referenced_cols(agg_exprs.clone());
-        if let Some(pred) = select.predicate {
-            let colnamesinprojwithoutaggs = self.get_referenced_cols(projwithoutaggs.clone());
-            let allrequiredcols: HashSet<String> = colnamesinprojwithoutaggs
-                .union(&colnames_in_pred)
-                .map(|s| s.to_owned())
-                .collect::<HashSet<String>>()
-                .union(&colnames_in_agg)
-                .map(|s| s.to_owned())
-                .collect();
-            let missing = allrequiredcols
-                .difference(&colnamesinprojwithoutaggs)
-                .map(|s| s.to_owned())
-                .collect::<HashSet<String>>();
-
-            if missing.is_empty() {
-                plan = plan.project(projwithoutaggs);
-            } else {
-                let haha = missing.iter().map(|s| col(s)).collect::<Vec<LogicalExpr>>();
-                let mut aaa = projwithoutaggs.clone();
-                aaa.extend_from_slice(&haha);
-                plan = plan.project(aaa);
-            }
-            plan = plan.filter(self.create_logical_expr(pred, plan.clone()));
-        };
-
-        let groupbyexpr = select
+        let group_exprs = select
             .group_by
-            .unwrap()
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|expr| self.create_logical_expr(expr, plan.clone()))
+            .collect::<Vec<_>>();
+
+        // IMPORTANT:
+        // Keep aliases around aggregates here.
+        //
+        // create_physical_agg_expr() already knows how to handle
+        // Alias(Aggregate(...)), so don't strip them.
+        let agg_exprs = projection_exprs
             .iter()
-            .map(|e| self.create_logical_expr(e.clone(), plan.clone()))
-            .collect::<Vec<LogicalExpr>>();
-        plan.agg(groupbyexpr, agg_exprs)
+            .filter(|expr| self.is_agg_expr(expr))
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let num_groups = group_exprs.len();
+
+        plan = plan.agg(group_exprs.clone(), agg_exprs);
+
+        let mut agg_index = 0;
+        let mut projection = Vec::with_capacity(projection_exprs.len());
+
+        for expr in projection_exprs {
+            if self.is_agg_expr(&expr) {
+                let index = num_groups + agg_index;
+                agg_index += 1;
+
+                let projected = match expr.kind() {
+                    LogicalExprKind::Alias(alias_expr) => {
+                        alias(col_idx(index), alias_expr.name.clone())
+                    }
+                    LogicalExprKind::Aggregate(_) => col_idx(index),
+                    _ => unreachable!(),
+                };
+
+                projection.push(projected);
+                continue;
+            }
+
+            let group_index = self.group_expr_index(&expr, &group_exprs);
+
+            let projected = match expr.kind() {
+                LogicalExprKind::Alias(alias_expr) => {
+                    alias(col_idx(group_index), alias_expr.name.clone())
+                }
+                _ => col_idx(group_index),
+            };
+
+            projection.push(projected);
+        }
+
+        plan.project(projection)
     }
 
     fn create_non_agg_query(
@@ -769,21 +830,31 @@ impl SqlExpr {
         xdd
     }
 
-    fn is_agg_expr(&self, e: LogicalExpr) -> u8 {
-        match e.kind() {
-            crate::logical::expr::LogicalExprKind::Aggregate(_) => 1,
-            crate::logical::expr::LogicalExprKind::Alias(alias_logical_expr) => {
-                if matches!(
-                    alias_logical_expr.expr.kind(),
-                    LogicalExprKind::Aggregate(_)
-                ) {
-                    1
-                } else {
-                    0
-                }
+    fn is_agg_expr(&self, expr: &LogicalExpr) -> bool {
+        match expr.kind() {
+            LogicalExprKind::Aggregate(_) => true,
+            LogicalExprKind::Alias(alias) => {
+                matches!(alias.expr.kind(), LogicalExprKind::Aggregate(_))
             }
-            _ => 0,
+            _ => false,
         }
+    }
+
+    fn group_expr_index(&self, expr: &LogicalExpr, group_exprs: &[LogicalExpr]) -> usize {
+        let expr = match expr.kind() {
+            LogicalExprKind::Alias(alias) => &alias.expr,
+            _ => expr,
+        };
+
+        group_exprs
+            .iter()
+            .position(|group_expr| group_expr.to_string() == expr.to_string())
+            .unwrap_or_else(|| {
+                panic!(
+                    "Expression '{}' must appear in GROUP BY or be an aggregate",
+                    expr
+                )
+            })
     }
 
     fn get_referenced_cols(&self, exprs: Vec<LogicalExpr>) -> HashSet<String> {
@@ -794,19 +865,20 @@ impl SqlExpr {
 
     fn visit(&self, expr: LogicalExpr, acc: &mut HashSet<String>) {
         match expr.kind() {
-            crate::logical::expr::LogicalExprKind::Column(e) => {
+            LogicalExprKind::Column(e) => {
                 acc.insert(e.name().to_owned());
             }
-            crate::logical::expr::LogicalExprKind::Binary(e) => {
+            LogicalExprKind::Binary(e) => {
                 self.visit(e.left().clone(), acc);
                 self.visit(e.right().clone(), acc);
             }
-            crate::logical::expr::LogicalExprKind::Aggregate(e) => {
+            LogicalExprKind::Aggregate(e) => {
                 self.visit(e.expr.clone(), acc);
             }
-            crate::logical::expr::LogicalExprKind::Alias(e) => {
+            LogicalExprKind::Alias(e) => {
                 self.visit(e.expr.clone(), acc);
             }
+            LogicalExprKind::Literal(_) | LogicalExprKind::ColumnIndex(_) => {}
             _ => panic!("Unexpected expr in projection {}", expr),
         };
     }
@@ -837,6 +909,10 @@ impl SqlExpr {
                     _ => panic!("Invalid operator {}", sql.op),
                 }
             }
+            SqlExprKind::Literal(sql) => match sql {
+                SqlLiteral::Number(n) => lit(*n),
+                SqlLiteral::String(s) => lit(s.as_str()),
+            },
             SqlExprKind::Function(sql) => match sql.ident.to_lowercase().as_str() {
                 "min" | "max" | "sum" | "avg" => {
                     if sql.args.is_empty() {
@@ -862,12 +938,16 @@ impl SqlExpr {
 impl std::fmt::Display for SqlExpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.kind() {
-            SqlExprKind::Identifier(sql) => write!(f, "{}", sql),
-            SqlExprKind::Alias(sql) => write!(f, "{}", sql),
-            SqlExprKind::Binary(sql) => write!(f, "{}", sql),
-            SqlExprKind::Select(sql) => write!(f, "{}", sql),
-            SqlExprKind::Sort(sql) => write!(f, "{}", sql),
-            SqlExprKind::Function(sql) => write!(f, "{}", sql),
+            SqlExprKind::Identifier(expr) => expr.fmt(f),
+            SqlExprKind::Alias(expr) => expr.fmt(f),
+            SqlExprKind::Binary(expr) => expr.fmt(f),
+            SqlExprKind::Select(expr) => expr.fmt(f),
+            SqlExprKind::Sort(expr) => expr.fmt(f),
+            SqlExprKind::Function(expr) => expr.fmt(f),
+            SqlExprKind::Literal(expr) => match expr {
+                SqlLiteral::Number(n) => write!(f, "{n}"),
+                SqlLiteral::String(s) => write!(f, "'{s}'"),
+            },
         }
     }
 }
@@ -904,11 +984,15 @@ impl TokenStream {
     }
 
     pub fn consume_keywords(&mut self, keywords: Vec<String>) -> bool {
+        let start = self.i;
+
         for kw in keywords {
             if !self.consume_keyword(kw) {
+                self.i = start;
                 return false;
             }
         }
+
         true
     }
 
@@ -927,6 +1011,7 @@ impl TokenStream {
                 | TokenType::Group
                 | TokenType::Order
                 | TokenType::By
+                | TokenType::Having
                 | TokenType::Asc
                 | TokenType::Desc
                 | TokenType::Explain
@@ -1005,6 +1090,19 @@ impl Parser {
 
         let expr: SqlExpr = match token.type_ {
             TokenType::Select => self.parse_select(),
+            TokenType::Number => {
+                let val = token
+                    .lexeme
+                    .parse::<f64>()
+                    .unwrap_or_else(|_| panic!("Invalid number literal '{}'", token.lexeme));
+                SqlLiteral::Number(val).into()
+            }
+            TokenType::String => {
+                // lexer includes the surrounding quotes
+                let inner = &token.lexeme[1..token.lexeme.len() - 1];
+                let value = inner.replace("''", "'");
+                SqlLiteral::String(value).into()
+            }
             TokenType::Min
             | TokenType::Max
             | TokenType::Sum
@@ -1182,8 +1280,22 @@ impl Parser {
 
             let mut limit = None;
             if self.stream.consume_keyword("LIMIT".into()) {
-                let limit_expr = self.parse_expr().unwrap();
-                todo!()
+                let token = self
+                    .stream
+                    .next()
+                    .expect("Expected number after LIMIT")
+                    .clone();
+
+                if token.type_ != TokenType::Number {
+                    panic!("Expected number after LIMIT, found {}", token);
+                }
+
+                limit = Some(
+                    token
+                        .lexeme
+                        .parse::<usize>()
+                        .unwrap_or_else(|_| panic!("LIMIT must be a non-negative integer")),
+                );
             }
 
             return SqlSelect::new(
@@ -1202,31 +1314,27 @@ impl Parser {
     }
 
     fn parse_order(&mut self) -> Vec<SqlExpr> {
-        let mut sortlist = Vec::new();
-        let mut sort = self.parse_expr();
+        let mut exprs = Vec::new();
 
-        while let Some(s) = sort {
-            let s = match s.kind() {
-                SqlExprKind::Identifier(_) => SqlSort::new(s, true).into(),
-                SqlExprKind::Sort(_) => s,
-                _ => panic!("Unexpected expression {} after order by", s),
+        loop {
+            let expr = self
+                .parse_expr()
+                .expect("Expected expression after ORDER BY");
+
+            let expr = if matches!(expr.kind(), SqlExprKind::Sort(_)) {
+                expr
+            } else {
+                SqlSort::new(expr, true).into()
             };
 
-            sortlist.push(s);
+            exprs.push(expr);
 
-            if matches!(
-                self.stream.peek(),
-                Some(token) if token.type_ == TokenType::Comma
-            ) {
-                self.stream.next();
-            } else {
+            if !self.stream.consume_token_type(TokenType::Comma) {
                 break;
             }
-
-            sort = self.parse_expr();
         }
 
-        sortlist
+        exprs
     }
 
     pub fn parse(&mut self) -> SqlExpr {
@@ -1250,8 +1358,10 @@ mod tests {
         FROM employees
         GROUP BY
             employee_id, month
+        HAVING avg(salary) > 13.37
         ORDER BY
-            month ASC, avg_salary DESC;
+            month ASC, avg_salary DESC
+        LIMIT 10;
         "#;
         let raw_query = &query.chars().collect::<Vec<char>>();
         let scanner = Scanner::new(raw_query);
@@ -1268,6 +1378,9 @@ mod tests {
         assert_eq!(select.table_name, "employees");
         assert_eq!(select.group_by.as_ref().unwrap().len(), 2);
         assert_eq!(select.order_by.as_ref().unwrap().len(), 2);
+        assert!(select.having.is_some());
+        assert_eq!(select.order_by.as_ref().unwrap().len(), 2);
+        assert_eq!(select.limit, Some(10));
 
         for xdd in xd {
             println!("{}", xdd);

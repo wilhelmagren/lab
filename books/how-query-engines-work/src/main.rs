@@ -59,20 +59,19 @@ fn main() {
         pretty_format_batches(&ctx.execute(&df).collect::<Vec<RecordBatch>>()).unwrap()
     );
 
-    let df = ctx
-        .sql(
-            r#"
+    let df = ctx.sql(
+        r#"
         SELECT
             station_name,
             min(measurement) AS min_measurement,
             max(measurement) AS max_measurement,
             avg(measurement) AS avg_measurement
         FROM weather_stations_small
-        GROUP BY station_name
-        ORDER BY station_name
+        GROUP BY station_name HAVING min_measurement > 13.37 AND avg_measurement < 42.81
+        ORDER BY max_measurement DESC
+        LIMIT 10
         "#,
-        )
-        .limit(10);
+    );
 
     println!(
         "{}",
