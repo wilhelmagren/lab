@@ -23,14 +23,14 @@ pub struct ParquetDataSource {
 
 impl ParquetDataSource {
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn new(filename: impl Into<String>) -> Self {
+    pub fn new(filename: impl Into<String>, name: impl Into<String>) -> Self {
         let filename = filename.into();
 
         let builder =
             ParquetRecordBatchReaderBuilder::try_new(fs::File::open(&filename).unwrap()).unwrap();
 
         Self {
-            name: filename.clone(),
+            name: name.into(),
             input: ParquetInput::File(filename),
             schema: builder.schema().clone(),
             parquet_schema: builder.parquet_schema().clone(),

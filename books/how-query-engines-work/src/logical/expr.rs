@@ -7,6 +7,7 @@ use crate::scalar::ScalarValue;
 #[derive(Clone)]
 pub enum LogicalExprKind {
     Column(ColumnLogicalExpr),
+    ColumnIndex(ColumnIndexLogicalExpr),
     Literal(LiteralLogicalExpr),
     Binary(BinaryLogicalExpr),
     Aggregate(AggregateLogicalExpr),
@@ -34,6 +35,7 @@ impl LogicalExpr {
             LogicalExprKind::Aggregate(expr) => expr.to_field(input),
             LogicalExprKind::Alias(expr) => expr.to_field(input),
             LogicalExprKind::Order(expr) => expr.to_field(input),
+            LogicalExprKind::ColumnIndex(expr) => expr.to_field(input),
         }
     }
 
@@ -83,6 +85,7 @@ impl std::fmt::Display for LogicalExpr {
             LogicalExprKind::Aggregate(expr) => expr.fmt(f),
             LogicalExprKind::Alias(expr) => expr.fmt(f),
             LogicalExprKind::Order(expr) => expr.fmt(f),
+            LogicalExprKind::ColumnIndex(expr) => expr.fmt(f),
         }
     }
 }
@@ -120,6 +123,26 @@ pub fn col(name: impl Into<String>) -> LogicalExpr {
     }))
 }
 
+#[derive(Clone)]
+pub struct ColumnIndexLogicalExpr {
+    pub idx: usize,
+}
+
+impl ColumnIndexLogicalExpr {
+    fn to_field(&self, input: &Schema) -> FieldRef {
+        input.fields()[self.idx].clone()
+    }
+}
+
+impl std::fmt::Display for ColumnIndexLogicalExpr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "#{}", self.idx)
+    }
+}
+
+pub fn col_idx(idx: usize) -> LogicalExpr {
+    LogicalExpr::new(LogicalExprKind::ColumnIndex(ColumnIndexLogicalExpr { idx }))
+}
 #[derive(Clone)]
 pub struct LiteralLogicalExpr {
     value: ScalarValue,

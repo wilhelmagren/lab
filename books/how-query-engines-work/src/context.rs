@@ -9,6 +9,7 @@ use crate::{
     dataframe::DataFrame,
     logical::plan::LogicalPlan,
     planner::Planner,
+    sql::{Parser, Scanner, Token},
 };
 
 #[derive(Clone)]
@@ -36,10 +37,10 @@ impl SessionContext {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn parquet(&self, path: impl Into<String>) -> DataFrame {
-        let source = ParquetDataSource::new(path);
+    pub fn parquet(&self, path: impl Into<String>, name: impl Into<String>) -> DataFrame {
+        let name: String = name.into();
+        let source = ParquetDataSource::new(path, name.clone());
 
-        let name = source.name().to_owned();
         let schema = source.schema().clone();
         let source_id = self.sources.register(source);
 
@@ -47,6 +48,16 @@ impl SessionContext {
         let plan = LogicalPlan::scan(source_id, name, schema);
 
         DataFrame::new(plan, self.sources.clone())
+    }
+
+    pub fn sql(&self, query: impl Into<String>) -> DataFrame {
+        let raw = query.into().chars().collect::<Vec<char>>();
+        let scanner = Scanner::new(&raw);
+        let tokens = scanner.scan_tokens().into_iter().collect::<Vec<Token>>();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse();
+
+        ast.as_dataframe(self.sources.clone())
     }
 
     pub fn execute(&self, df: &DataFrame) -> RecordBatchIterator {

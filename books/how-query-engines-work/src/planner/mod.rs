@@ -111,23 +111,24 @@ impl Planner {
             LogicalExprKind::Column(expr) => {
                 PhysicalColumnExpr::new(input.schema().index_of(expr.name()).unwrap()).into()
             }
+
+            LogicalExprKind::ColumnIndex(expr) => PhysicalColumnExpr::new(expr.idx).into(),
+
             LogicalExprKind::Literal(expr) => {
                 PhysicalLiteralExpr::new(expr.value().to_arrow_scalar()).into()
             }
-            // TODO: maybe we should do specialized BinaryExpr instead, like PhysicalMultiplyExpression
-            // so here we would have to match on the expr.op and dispatch during the planning phase,
-            // that might be faster, cus right now we match inside the evaluate...
+
             LogicalExprKind::Binary(expr) => PhysicalBinaryExpr::new(
                 expr.name(),
                 self.create_physical_expr(input.clone(), expr.left().clone()),
                 expr.op().clone(),
-                self.create_physical_expr(input.clone(), expr.right().clone()),
+                self.create_physical_expr(input, expr.right().clone()),
             )
             .into(),
-            // alias only affects naming during planning, as it gives a name to an expr
-            // just evaluate the underlying expr, it has no specific physical repr
+
             LogicalExprKind::Alias(expr) => self.create_physical_expr(input, expr.expr().clone()),
-            _ => unreachable!(),
+
+            _ => panic!("unsupported physical expression: {expr}"),
         }
     }
 

@@ -16,10 +16,10 @@ fn main() {
     let ctx = SessionContext::new();
 
     let df_users = ctx
-        .parquet("./data/users.parquet")
+        .parquet("./data/users.parquet", "users")
         .filter(col("age").gteq(100i64));
 
-    let df_jobs = ctx.parquet("./data/jobs.parquet");
+    let df_jobs = ctx.parquet("./data/jobs.parquet", "jobs");
 
     let df = df_users
         .join(&df_jobs, JoinType::Right, vec![JoinKey::new("id", "id")])
@@ -42,13 +42,36 @@ fn main() {
     );
 
     let df = ctx
-        .parquet("./data/weather_stations_small.parquet")
+        .parquet(
+            "./data/weather_stations_small.parquet",
+            "weather_stations_small",
+        )
         .agg(
             vec![col("station_name")],
             vec![count(col("station_name")).alias("occurrences")],
         )
         .filter(col("occurrences").gt(1 as u64))
         .sort(vec![desc(col("occurrences"))])
+        .limit(10);
+
+    println!(
+        "{}",
+        pretty_format_batches(&ctx.execute(&df).collect::<Vec<RecordBatch>>()).unwrap()
+    );
+
+    let df = ctx
+        .sql(
+            r#"
+        SELECT
+            station_name,
+            min(measurement) AS min_measurement,
+            max(measurement) AS max_measurement,
+            avg(measurement) AS avg_measurement
+        FROM weather_stations_small
+        GROUP BY station_name
+        ORDER BY station_name
+        "#,
+        )
         .limit(10);
 
     println!(

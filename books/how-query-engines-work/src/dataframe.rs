@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use crate::data_source::registry::SourceRegistry;
-use crate::logical::expr::{ColumnLogicalExpr, LogicalExpr};
+use crate::logical::expr::LogicalExpr;
 use crate::logical::plan::{JoinKey, JoinType, LogicalPlan};
 
+#[derive(Clone)]
 pub struct DataFrame {
     plan: LogicalPlan,
     sources: Arc<SourceRegistry>,
